@@ -2,6 +2,24 @@
 
 A GPT-style language model built from scratch in PyTorch.
 
+## TODO
+
+- [ ] Add dataset download scripts
+- [ ] Add evaluation metrics (follow nanochat example)
+
+- [ ] Architecture Experiments
+  - [ ] [Grouped query attention](https://arxiv.org/pdf/2305.13245) 
+  - [ ] SwiGLU activation - used in Llama, PaLM
+  - [ ] Compare LayerNorm with RMSNorm
+  - [ ] Parallel attention 
+  - [ ] [Multi-query attention](https://arxiv.org/pdf/1911.02150)
+
+- [ ] Training Optimizations
+  - [ ] Flash attention 3
+  - [ ] MoE
+  - [ ] Muon Optimizer
+  - [ ] Cirriculum learning / data ordering
+
 ## Features
 
 - ✅ **Complete GPT architecture** - Decoder-only transformer with multi-head attention
