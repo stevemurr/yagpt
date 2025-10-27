@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yagpt"
+version = "0.1.0"
+description = "Yet Another GPT - Educational implementation of GPT-style language model in PyTorch"
+authors = [{name = "Your Name", email = "your.email@example.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["gpt", "transformer", "language-model", "pytorch", "deep-learning", "nlp", "educational"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Core dependencies
+dependencies = [
+    "torch>=2.0.0",
+    "tiktoken>=0.5.0",
+    "pyarrow>=14.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "typer>=0.9.0",
+    "rich>=13.0.0",  # For beautiful CLI output (required by typer[all])
+]
+
+[project.optional-dependencies]
+# Development tools
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+# Optional logging backends
+logging = [
+    "wandb>=0.15.0",
+    "tensorboard>=2.14.0",
+    "tabulate>=0.9.0",
+]
+
+# All optional dependencies
+all = [
+    "yagpt[dev,logging]",
+]
+
+[project.scripts]
+yagpt = "scripts.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/yagpt"
+Documentation = "https://github.com/yourusername/yagpt#readme"
+Repository = "https://github.com/yourusername/yagpt"
+Issues = "https://github.com/yourusername/yagpt/issues"
+
+# Package discovery for flat layout
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["yagpt*", "scripts*"]
+namespaces = false
+
+# Black configuration
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+# Ruff configuration
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+
+[tool.ruff.lint.isort]
+known-first-party = ["yagpt"]
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "tiktoken.*",
+    "pyarrow.*",
+    "wandb.*",
+    "tensorboard.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
