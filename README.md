@@ -5,20 +5,9 @@ A GPT-style language model built from scratch in PyTorch.
 ## TODO
 
 - [ ] Add dataset download scripts
-- [ ] Add evaluation metrics (follow nanochat example)
+- [x] Add evaluation metrics (perplexity + HellaSwag benchmark)
 
-- [ ] Architecture Experiments
-  - [ ] [Grouped query attention](https://arxiv.org/pdf/2305.13245) 
-  - [ ] SwiGLU activation - used in Llama, PaLM
-  - [ ] Compare LayerNorm with RMSNorm
-  - [ ] Parallel attention 
-  - [ ] [Multi-query attention](https://arxiv.org/pdf/1911.02150)
-
-- [ ] Training Optimizations
-  - [ ] Flash attention 3
-  - [ ] MoE
-  - [ ] Muon Optimizer
-  - [ ] Cirriculum learning / data ordering
+For a comprehensive list of future optimizations, see [docs/TODOS.md](docs/TODOS.md)
 
 ## Features
 
@@ -26,6 +15,7 @@ A GPT-style language model built from scratch in PyTorch.
 - ✅ **GPT-4 tokenizer** - Using tiktoken's `cl100k_base` encoding (100k vocabulary)
 - ✅ **Scalable** - Mini (~85M), Medium (~350M), Large (~774M) configurations
 - ✅ **Efficient data loading** - Streaming from parquet shards (FineWeb dataset)
+- ✅ **Evaluation framework** - Perplexity tracking + HellaSwag benchmark
 - ✅ **Flexible logging** - Console, CSV, W&B, TensorBoard support
 - ✅ **Checkpointing** - Automatic checkpoint management (keeps last 5)
 - ✅ **Resume training** - Continue from any checkpoint
@@ -43,11 +33,15 @@ yagpt/
 │   ├── logger.py          # Multi-backend logging system
 │   ├── train.py           # Training script
 │   ├── generate.py        # Text generation script
+│   ├── eval_harness.py    # Evaluation wrapper for benchmarks
 │   └── utils.py           # Checkpoint inspection utilities
 ├── scripts/
-│   └── cli.py           # CLI entry point
+│   └── cli.py             # CLI entry point
 ├── tests/                 # Unit tests
 ├── docs/                  # Documentation
+│   ├── EVALUATION.md      # Evaluation framework guide
+│   ├── LOGGING.md         # Logging system documentation
+│   └── TODOS.md           # Future optimizations
 ├── configs/               # Training configurations
 ├── pyproject.toml         # Project metadata and dependencies
 └── README.md              # This file
@@ -320,6 +314,45 @@ Example data structure:
     ]
 }
 ```
+
+## Evaluation
+
+YAGPT includes a comprehensive evaluation framework for tracking model performance. See [EVALUATION.md](docs/EVALUATION.md) for complete documentation.
+
+### Metrics Tracked
+
+- **Perplexity** - Validation perplexity (exp(loss)) tracked every 5000 steps
+- **HellaSwag** - Commonsense reasoning benchmark (25% = random, 95% = GPT-4)
+- **Generation Samples** - Qualitative text generation examples
+
+### During Training
+
+Evaluation runs automatically during training every 5000 steps:
+
+```
+step   5000 | loss=3.2451 | lr=2.85e-04 | step_time_ms=234.56
+
+Running HellaSwag evaluation at iteration 5000...
+======================================================================
+HellaSwag Results:
+  Accuracy: 0.2847 (28.47%)
+  Acc (normalized): 0.2891 (28.91%)
+======================================================================
+```
+
+### Standalone Evaluation
+
+Evaluate any checkpoint on HellaSwag benchmark:
+
+```bash
+# Full evaluation
+yagpt eval ./checkpoints/checkpoint_iter_50000.pt
+
+# Quick test (100 examples)
+yagpt eval ./checkpoints/checkpoint_iter_50000.pt --limit 100
+```
+
+All metrics are logged to W&B, CSV, and console for easy tracking and comparison.
 
 ## Logging & Monitoring
 

@@ -18,7 +18,8 @@ from rich.table import Table
 from yagpt.train import TrainingConfig, train as run_training
 from yagpt.generate import load_model_from_checkpoint, generate_text
 from yagpt.tokenizer import GPT4Tokenizer
-from yagpt.model import create_gpt_mini
+from yagpt.model import create_gpt_mini, GPT
+from yagpt.eval_harness import run_hellaswag_eval
 
 app = typer.Typer(
     name="yagpt",
@@ -479,6 +480,156 @@ def test():
     console.print("   [green]✓ Generation works![/green]\n")
 
     console.print("[bold green]✅ All tests passed![/bold green]")
+
+
+@app.command()
+def eval(
+    checkpoint: Path = typer.Argument(
+        ...,
+        help="Path to model checkpoint to evaluate",
+        exists=True,
+    ),
+    task: str = typer.Option(
+        "hellaswag",
+        "--task",
+        "-t",
+        help="Evaluation task: hellaswag, arc_easy, arc_challenge, mmlu",
+    ),
+    batch_size: int = typer.Option(
+        8,
+        "--batch-size",
+        "-b",
+        help="Batch size for evaluation",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Limit number of examples (for testing)",
+    ),
+):
+    """
+    Run evaluation benchmarks on a trained model checkpoint.
+
+    Currently supports HellaSwag benchmark. Results are printed to console.
+
+    Examples:
+        yagpt eval ./checkpoints/checkpoint_iter_50000.pt
+        yagpt eval ./checkpoints/checkpoint_iter_50000.pt --batch-size 16
+        yagpt eval ./checkpoints/checkpoint_iter_50000.pt --limit 100
+    """
+    console.print(f"[bold green]Loading checkpoint:[/bold green] {checkpoint}")
+    console.print(f"[bold]Task:[/bold] {task}")
+    console.print(f"[bold]Batch size:[/bold] {batch_size}")
+    if limit:
+        console.print(f"[bold yellow]Limit:[/bold yellow] {limit} examples (testing mode)")
+    console.print()
+
+    # Determine device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    console.print(f"[bold]Device:[/bold] {device}\n")
+
+    # Load checkpoint
+    console.print("[dim]Loading model...[/dim]")
+    checkpoint_data = torch.load(checkpoint, map_location='cpu')
+
+    # Get config from checkpoint
+    from yagpt.model import GPTConfig
+    config_dict = checkpoint_data['config']
+    model_config = GPTConfig(
+        vocab_size=config_dict['vocab_size'],
+        n_layer=config_dict['n_layer'],
+        n_head=config_dict['n_head'],
+        n_embd=config_dict['n_embd'],
+        block_size=config_dict['block_size'],
+        dropout=config_dict.get('dropout', 0.1),
+    )
+
+    # Create and load model
+    model = GPT(model_config)
+
+    # Handle torch.compile state dict (removes _orig_mod. prefix)
+    state_dict = checkpoint_data['model_state_dict']
+    # Check if state dict has _orig_mod keys (from torch.compile)
+    if any('_orig_mod' in k for k in state_dict.keys()):
+        # Remove _orig_mod. prefix (can appear at start or middle of key)
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            # Remove _orig_mod. from start of key
+            new_key = k.replace('_orig_mod.', '')
+            # Remove ._orig_mod from middle of key
+            new_key = new_key.replace('._orig_mod', '')
+            new_state_dict[new_key] = v
+        state_dict = new_state_dict
+
+    model.load_state_dict(state_dict)
+    model = model.to(device)
+    model.eval()
+
+    console.print(f"[green]✓ Model loaded[/green]")
+
+    # Show checkpoint info
+    iteration = checkpoint_data.get('iteration', 'unknown')
+    train_loss = checkpoint_data.get('train_loss', 'unknown')
+    console.print(f"[dim]Checkpoint iteration: {iteration}[/dim]")
+    if train_loss != 'unknown':
+        console.print(f"[dim]Training loss: {train_loss:.4f}[/dim]")
+    console.print()
+
+    # Create tokenizer
+    tokenizer = GPT4Tokenizer()
+
+    # Run evaluation
+    if task == "hellaswag":
+        metrics = run_hellaswag_eval(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            batch_size=batch_size,
+            limit=limit,
+        )
+
+        # Display results in a nice table
+        console.print("\n[bold green]Evaluation Complete![/bold green]\n")
+
+        results_table = Table(title="HellaSwag Results", show_header=True)
+        results_table.add_column("Metric", style="cyan")
+        results_table.add_column("Value", style="green", justify="right")
+        results_table.add_column("Percentage", style="yellow", justify="right")
+
+        results_table.add_row(
+            "Accuracy",
+            f"{metrics['hellaswag_acc']:.4f}",
+            f"{metrics['hellaswag_acc']*100:.2f}%"
+        )
+        results_table.add_row(
+            "Acc (normalized)",
+            f"{metrics['hellaswag_acc_norm']:.4f}",
+            f"{metrics['hellaswag_acc_norm']*100:.2f}%"
+        )
+
+        console.print(results_table)
+        console.print()
+
+        # Add context about performance
+        acc_pct = metrics['hellaswag_acc'] * 100
+        if acc_pct < 26:
+            console.print("[yellow]Note: Performance is near random baseline (25%)[/yellow]")
+        elif acc_pct < 50:
+            console.print("[yellow]Note: Performance is below BERT-Large (~48%)[/yellow]")
+        elif acc_pct < 70:
+            console.print("[green]Note: Performance is comparable to BERT-Large (~48-70%)[/green]")
+        elif acc_pct < 78:
+            console.print("[green]Note: Performance is comparable to GPT-2 (~70-78%)[/green]")
+        elif acc_pct < 95:
+            console.print("[green]Note: Performance is comparable to GPT-3 (~78-95%)[/green]")
+        else:
+            console.print("[bold green]Note: Performance is comparable to GPT-4 (~95%+)[/bold green]")
+
+    else:
+        console.print(f"[bold red]Error:[/bold red] Task '{task}' not yet implemented")
+        console.print("[yellow]Currently supported tasks: hellaswag[/yellow]")
+        raise typer.Exit(1)
 
 
 @app.command()

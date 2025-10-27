@@ -27,6 +27,7 @@ from yagpt.model import GPT, GPTConfig, create_gpt_mini
 from yagpt.tokenizer import GPT4Tokenizer
 from yagpt.dataloader import FineWebDataset
 from yagpt.logger import create_logger
+from yagpt.eval_harness import run_hellaswag_eval
 
 # Enable TF32 for faster training on Ampere+ GPUs (RTX 3000/4000 series)
 # TF32 uses lower precision for matmul but maintains full precision for accumulation
@@ -68,8 +69,10 @@ class TrainingConfig:
     min_lr: float = 3e-5
 
     # Evaluation
-    eval_interval: int = 500
+    eval_interval: int = 5000
     eval_iters: int = 100
+    run_hellaswag: bool = True  # Run HellaSwag benchmark during eval
+    hellaswag_batch_size: int = 8  # Batch size for HellaSwag eval
 
     # Text generation during evaluation
     generate_samples: bool = True  # Generate text samples during eval
@@ -166,8 +169,10 @@ class TrainingConfig:
         # Evaluation parameters
         if 'evaluation' in yaml_config:
             evaluation = yaml_config['evaluation']
-            params['eval_interval'] = evaluation.get('eval_interval', 500)
+            params['eval_interval'] = evaluation.get('eval_interval', 5000)
             params['eval_iters'] = evaluation.get('eval_iters', 100)
+            params['run_hellaswag'] = evaluation.get('run_hellaswag', True)
+            params['hellaswag_batch_size'] = evaluation.get('hellaswag_batch_size', 8)
             params['generate_samples'] = evaluation.get('generate_samples', True)
             params['num_generation_prompts'] = evaluation.get('num_generation_prompts', 3)
             params['generation_max_tokens'] = evaluation.get('generation_max_tokens', 100)
@@ -588,16 +593,33 @@ def train(config: TrainingConfig):
         # Evaluation
         if iteration > 0 and iteration % config.eval_interval == 0:
             val_loss = estimate_loss(model, val_loader, config.eval_iters, device)
+            val_perplexity = math.exp(val_loss)
 
             # Log validation metrics
             logger.log_metrics({
                 'val/loss': val_loss,
+                'val/perplexity': val_perplexity,
             }, step=iteration)
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 logger.log_metrics({
                     'val/best_loss': best_val_loss,
+                }, step=iteration)
+
+            # Run HellaSwag benchmark evaluation
+            if config.run_hellaswag:
+                print(f"\nRunning HellaSwag evaluation at iteration {iteration}...")
+                hellaswag_metrics = run_hellaswag_eval(
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    batch_size=config.hellaswag_batch_size,
+                )
+                # Log HellaSwag metrics
+                logger.log_metrics({
+                    'eval/hellaswag_acc': hellaswag_metrics['hellaswag_acc'],
+                    'eval/hellaswag_acc_norm': hellaswag_metrics['hellaswag_acc_norm'],
                 }, step=iteration)
 
             # Generate sample texts for monitoring
