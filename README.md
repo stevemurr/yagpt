@@ -27,7 +27,7 @@ yagpt/
 │   ├── generate.py        # Text generation script
 │   └── utils.py           # Checkpoint inspection utilities
 ├── scripts/
-│   └── train.py           # CLI entry point
+│   └── cli.py           # CLI entry point
 ├── tests/                 # Unit tests
 ├── docs/                  # Documentation
 ├── configs/               # Training configurations
