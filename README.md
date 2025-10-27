@@ -1,8 +1,6 @@
 # YAGPT (Yet Another GPT) - PyTorch Implementation
 
-A complete, educational implementation of a GPT-style language model built from scratch in PyTorch.
-
-> **Note**: This is an educational project demonstrating the implementation of transformer-based language models. It's not a novel architecture, but rather a learning exercise and portfolio piece showing understanding of modern LLM architectures.
+A GPT-style language model built from scratch in PyTorch.
 
 ## Features
 
@@ -41,50 +39,24 @@ yagpt/
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/yagpt.git
+   git clone https://github.com/stevemurr/yagpt.git
    cd yagpt
    ```
 
 2. **Create a virtual environment**:
    ```bash
-   python -m venv .venv
+   uv venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. **Install the package**:
    ```bash
    # Install in editable mode with all dependencies
-   pip install -e ".[all]"
+   uv pip install -e ".[all]"
 
    # Or just core dependencies
-   pip install -e .
+   uv pip install -e .
    ```
-
-## Quick Start
-
-### 1. Test the Model
-
-```bash
-python -m yagpt.model
-```
-
-This will create a small test model and verify it works.
-
-### 2. Test the Tokenizer
-
-```bash
-python -m yagpt.tokenizer
-```
-
-See how the GPT-4 tokenizer encodes text.
-
-### 3. Test the Dataloader
-
-```bash
-python -m yagpt.dataloader
-```
-
-Load and tokenize data from your FineWeb parquet files.
 
 ## Training
 
@@ -93,9 +65,7 @@ Load and tokenize data from your FineWeb parquet files.
 Start training from scratch:
 
 ```bash
-yagpt train
-# or
-python -m yagpt.train
+yagpt train -c ./configs/config.yaml
 ```
 
 This uses default configuration:
@@ -109,7 +79,7 @@ This uses default configuration:
 Continue from a checkpoint:
 
 ```bash
-yagpt resume
+yagpt resume -c ./configs/config.yaml
 ```
 
 Or specify a specific checkpoint:
@@ -136,33 +106,6 @@ config.resume_from = "./checkpoints/checkpoint_iter_50000.pt"
 config.data_dir = "./datasets/my_custom_data"
 config.learning_rate = 1e-4  # Lower LR for fine-tuning
 config.max_iters = 10000
-```
-
-### Custom Configuration
-
-```python
-from yagpt import TrainingConfig, train
-
-config = TrainingConfig(
-    # Model size
-    n_layer=24,
-    n_head=16,
-    n_embd=1024,
-
-    # Training
-    batch_size=16,
-    gradient_accumulation_steps=2,
-    max_iters=50000,
-
-    # Data
-    data_dir="./datasets/fineweb",
-
-    # Checkpointing
-    checkpoint_interval=1000,
-    keep_last_n_checkpoints=5,
-)
-
-train(config)
 ```
 
 ## Text Generation
@@ -192,7 +135,7 @@ Commands in interactive mode:
 Generate from a single prompt:
 
 ```bash
-python -m yagpt.generate \
+yagpt generate \
   --checkpoint ./checkpoints/checkpoint_iter_10000.pt \
   --mode single \
   --prompt "Once upon a time" \
@@ -290,26 +233,6 @@ model = create_gpt_mini()
 - Memory: ~1GB
 - Good for: Experimentation, small datasets
 
-### Medium
-```python
-from yagpt import create_gpt_medium
-model = create_gpt_medium()
-```
-- Parameters: ~350M
-- Layers: 24, Heads: 16, Dim: 1024
-- Memory: ~3-4GB
-- Good for: Moderate datasets, better quality
-
-### Large
-```python
-from yagpt import create_gpt_large
-model = create_gpt_large()
-```
-- Parameters: ~774M
-- Layers: 36, Heads: 20, Dim: 1280
-- Memory: ~6-8GB
-- Good for: Large datasets, high quality
-
 ### Custom Size
 ```python
 from yagpt import GPT, GPTConfig
@@ -395,7 +318,6 @@ train(config)
 
 **Add Weights & Biases**:
 ```bash
-pip install wandb
 wandb login
 ```
 ```python
@@ -404,9 +326,6 @@ config.wandb_project = "my-gpt-project"
 ```
 
 **Add TensorBoard**:
-```bash
-pip install tensorboard
-```
 ```python
 config.log_backends = ['console', 'csv', 'tensorboard']
 ```
@@ -425,67 +344,6 @@ Example console output:
 ```
 step    100 | loss=3.2451 | lr=2.85e-04 | step_time_ms=234.56
 step    110 | loss=3.2123 | lr=2.86e-04 | step_time_ms=231.23
-```
-
-## Architecture Details
-
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for comprehensive documentation on:
-- Model architecture diagrams
-- Component explanations
-- Mathematical details
-- Comparison to GPT-2/3/4
-- Performance considerations
-
-## Common Issues
-
-### 1. Out of Memory
-
-**Solution**: Reduce batch size or sequence length
-```python
-config.batch_size = 4
-config.block_size = 1024
-```
-
-### 2. Slow Training
-
-**Solution**: Enable compilation (PyTorch 2.0+)
-```python
-config.compile_model = True
-```
-
-### 3. NaN Loss
-
-**Solutions**:
-- Reduce learning rate
-- Enable gradient clipping (already enabled)
-- Check data quality
-
-### 4. Tokenizer Not Found
-
-**Solution**: Install tiktoken
-```bash
-pip install tiktoken
-```
-
-## Performance Benchmarks
-
-On a single NVIDIA A100 (40GB):
-
-| Model | Batch Size | Seq Length | Tokens/sec | Memory |
-|-------|------------|------------|------------|--------|
-| Mini | 32 | 2048 | ~50k | ~8GB |
-| Medium | 16 | 2048 | ~25k | ~20GB |
-| Large | 8 | 2048 | ~12k | ~35GB |
-
-*Note: With gradient accumulation and mixed precision*
-
-## Distributed Training
-
-To train on multiple GPUs (implement using PyTorch DDP):
-
-```python
-# Coming soon...
-# See PyTorch Distributed Data Parallel documentation
 ```
 
 ## License
