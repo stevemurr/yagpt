@@ -1,0 +1,92 @@
+# Model Architecture
+model:
+  name: "gpt_bf16_rmsnorm"
+  tokenizer: "gpt2"  # Tokenizer encoding (gpt2, gpt4, etc.) - vocab_size is inferred from this
+  n_layer: 26
+  n_head: 24
+  n_embd: 768
+  block_size: 2048
+  n_kv_head: 8
+
+# Training Hyperparameters
+training:
+  batch_size: 32  # Per-device micro-batch size
+  max_iters: 100000
+  total_batch_size: 524288  # Total batch size in tokens (for gradient accumulation)
+
+# Optimizer Configuration
+# YAGPT uses dual optimizers: Muon for transformer matrices, AdamW for embeddings/head
+# Following official Muon recommendations: https://github.com/KellerJordan/modded-nanogpt
+optimizer:
+  # DEBUG MODE: Set to true to use only AdamW for all parameters (disables Muon)
+  # Useful for isolating optimizer bugs vs model/data issues
+  use_adamw_only: false       # Set to true for debugging
+  adamw_lr: 3.0e-4            # Learning rate when use_adamw_only=true
+
+  # Separate learning rates for each component (absolute values, not ratios)
+  muon_lr: 0.02               # Transformer matrices (Muon optimizer) - recommended: 0.02
+  adamw_embedding_lr: 3.0e-4  # Token embeddings (AdamW) - increased from 1e-4 after warmup fix
+  adamw_lm_head_lr: 3.0e-4    # LM head/unembedding (AdamW) - increased from 1e-4 after warmup fix
+
+  weight_decay: 1.0e-5        # Weight decay for AdamW (Muon handles this internally)
+  grad_clip: 1.0              # Gradient clipping threshold
+  apply_dmodel_scaling: false # Apply (d_model/768)^-0.5 LR scaling for different model sizes
+
+  # Learning rate schedule (applies to all optimizers via multiplier)
+  warmup_ratio: 0.005         # REDUCED: 0.5% warmup (500 steps) - was 0.02 (too long)
+  warmdown_ratio: 0.2         # Fraction of training for cooldown (20% of training)
+  final_lr_fraction: 0.0      # Final LR as fraction of peak LR (decay to 0)
+  use_cosine_decay: true      # Use cosine annealing for decay (smoother than linear)
+
+  # Muon momentum schedule
+  muon_warmup_iters: 300  # Iterations for Muon momentum warmup
+  muon_start_momentum: 0.85  # Starting momentum
+  muon_end_momentum: 0.95  # Final momentum
+
+  # Loss smoothing
+  ema_beta: 0.9  # EMA decay factor for training loss smoothing
+
+# Evaluation
+evaluation:
+  eval_interval: 1000
+  eval_iters: 50
+
+  # Text Generation During Eval
+  generate_samples: true
+  num_generation_prompts: 3
+  generation_max_tokens: 100
+  generation_temperature: 0.8
+  generation_top_k: 40
+  generation_top_p: 0.9
+
+# Logging
+logging:
+  log_interval: 10
+  backends:
+    - console
+    - wandb
+
+  wandb_project: "yagpt"
+  wandb_entity: null
+  wandb_mode: "online"
+
+  tensorboard_dir: "./runs"
+  csv_log_dir: "./logs"
+
+# Checkpointing
+checkpointing:
+  checkpoint_dir: "./checkpoints/bf16_new"
+  checkpoint_interval: 1000
+  keep_last_n_checkpoints: 5
+
+# Data
+data:
+  data_dir: "./datasets/fineweb"  # Fallback if train/val dirs not specified
+  train_data_dir: "./datasets/fineweb_tokenized/train" # Training data directory (if null, uses data_dir)
+  val_data_dir: "./datasets/fineweb_tokenized/val" # Validation data directory (if null, uses data_dir)
+  num_workers: 16  # Increased for better GPU utilization to reduce CPU bottleneck
+
+# System
+system:
+  device: "cuda"
+
