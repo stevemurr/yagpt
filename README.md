@@ -1,416 +1,158 @@
-# YAGPT (Yet Another GPT) - PyTorch Implementation
+# YAGPT
 
-A GPT-style language model built from scratch in PyTorch.
-
-## TODO
-
-- [ ] Add dataset download scripts
-- [x] Add evaluation metrics (perplexity + HellaSwag benchmark)
-
-For a comprehensive list of future optimizations, see [docs/TODOS.md](docs/TODOS.md)
+Yet Another GPT - A clean, modular GPT implementation for learning and experimentation.
 
 ## Features
 
-- ✅ **Complete GPT architecture** - Decoder-only transformer with multi-head attention
-- ✅ **GPT-4 tokenizer** - Using tiktoken's `cl100k_base` encoding (100k vocabulary)
-- ✅ **Scalable** - Mini (~85M), Medium (~350M), Large (~774M) configurations
-- ✅ **Efficient data loading** - Streaming from parquet shards (FineWeb dataset)
-- ✅ **Evaluation framework** - Perplexity tracking + HellaSwag benchmark
-- ✅ **Flexible logging** - Console, CSV, W&B, TensorBoard support
-- ✅ **Checkpointing** - Automatic checkpoint management (keeps last 5)
-- ✅ **Resume training** - Continue from any checkpoint
-- ✅ **Generation** - Interactive and batch text generation
-- ✅ **Modern training** - Gradient accumulation, LR scheduling, AdamW optimizer
+- **Clean Architecture**: Single-responsibility modules, ~200 lines per file
+- **Modern Techniques**: RoPE, RMSNorm, SwiGLU, GQA, Flash Attention
+- **Dual Optimizer**: Muon for transformer blocks + AdamW for embeddings
+- **Streaming Data**: Efficient parquet-based data loading
+- **Modular Callbacks**: Logging, checkpointing, eval without loop clutter
+
+## Quick Start
+
+```bash
+# Install
+pip install -e .
+
+# Train
+yagpt train --config configs/default.yaml
+
+# Generate
+yagpt generate checkpoints/final.pt --prompt "Once upon a time"
+```
 
 ## Project Structure
 
 ```
 yagpt/
-├── yagpt/
-│   ├── model.py           # GPT model architecture
-│   ├── tokenizer.py       # GPT-4 tokenizer wrapper (tiktoken)
-│   ├── dataloader.py      # FineWeb dataset loader
-│   ├── logger.py          # Multi-backend logging system
-│   ├── train.py           # Training script
-│   ├── generate.py        # Text generation script
-│   ├── eval_harness.py    # Evaluation wrapper for benchmarks
-│   └── utils.py           # Checkpoint inspection utilities
-├── scripts/
-│   └── cli.py             # CLI entry point
-├── tests/                 # Unit tests
-├── docs/                  # Documentation
-│   ├── EVALUATION.md      # Evaluation framework guide
-│   ├── LOGGING.md         # Logging system documentation
-│   └── TODOS.md           # Future optimizations
-├── configs/               # Training configurations
-├── pyproject.toml         # Project metadata and dependencies
-└── README.md              # This file
+├── models/           # Model components
+│   ├── gpt.py        # Main GPT model
+│   ├── attention.py  # Causal attention with GQA
+│   ├── mlp.py        # SwiGLU MLP
+│   ├── norm.py       # RMSNorm
+│   └── rope.py       # Rotary position embeddings
+├── optim/            # Optimizers
+│   ├── muon.py       # Muon optimizer
+│   └── lr_schedule.py
+├── training/         # Training infrastructure
+│   ├── trainer.py    # Training loop
+│   ├── config.py     # Configuration
+│   └── callbacks.py  # Logging, checkpoints, eval
+├── data/             # Data loading
+│   └── dataloader.py # Streaming parquet loader
+└── tokenizer.py      # Tiktoken wrapper
 ```
 
-## Installation
+## Usage
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/stevemurr/yagpt.git
-   cd yagpt
-   ```
-
-2. **Create a virtual environment**:
-   ```bash
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install the package**:
-   ```bash
-   # Install in editable mode with all dependencies
-   uv pip install -e ".[all]"
-
-   # Or just core dependencies
-   uv pip install -e .
-   ```
-
-## Training
-
-### Basic Training
-
-Start training from scratch:
-
-```bash
-yagpt train -c ./configs/config.yaml
-```
-
-This uses default configuration:
-- Model: GPT-Mini (12 layers, 768 dim, ~85M params)
-- Batch size: 8 (with gradient accumulation = effective 32)
-- Context length: 2048 tokens
-- Learning rate: 3e-4 with warmup and cosine decay
-
-### Resume Training
-
-Continue from a checkpoint:
-
-```bash
-yagpt resume -c ./configs/config.yaml
-```
-
-Or specify a specific checkpoint:
+### Python API
 
 ```python
-from yagpt import TrainingConfig, train
+from yagpt import GPT, GPTConfig, Tokenizer
 
-config = TrainingConfig()
-config.resume_from = "./checkpoints/checkpoint_iter_5000.pt"
-train(config)
-```
-
-### Fine-tuning
-
-To fine-tune on a different dataset:
-
-1. Load a pre-trained checkpoint
-2. Point to your new dataset directory
-3. Optionally reduce learning rate
-
-```python
-config = TrainingConfig()
-config.resume_from = "./checkpoints/checkpoint_iter_50000.pt"
-config.data_dir = "./datasets/my_custom_data"
-config.learning_rate = 1e-4  # Lower LR for fine-tuning
-config.max_iters = 10000
-```
-
-## Text Generation
-
-### Interactive Mode
-
-Generate text interactively:
-
-```bash
-yagpt generate ./checkpoints/checkpoint_iter_10000.pt
-
-# or
-python -m yagpt.generate \
-  --checkpoint ./checkpoints/checkpoint_iter_10000.pt \
-  --mode interactive
-```
-
-Commands in interactive mode:
-- `/temp 0.8` - Set temperature
-- `/tokens 200` - Set max tokens
-- `/topk 50` - Set top-k sampling
-- `/topp 0.95` - Set top-p (nucleus) sampling
-- `quit` or `exit` - Exit
-
-### Single Generation
-
-Generate from a single prompt:
-
-```bash
-yagpt generate \
-  --checkpoint ./checkpoints/checkpoint_iter_10000.pt \
-  --mode single \
-  --prompt "Once upon a time" \
-  --max-tokens 200 \
-  --temperature 0.8
-```
-
-### Batch Generation
-
-Generate from multiple prompts in a file:
-
-```bash
-# Create prompts file
-cat > prompts.txt << EOF
-The future of AI is
-In a world where technology
-Once upon a time in a land
-EOF
-
-python -m yagpt.generate \
-  --checkpoint ./checkpoints/checkpoint_iter_10000.pt \
-  --mode batch \
-  --prompts-file prompts.txt \
-  --max-tokens 100
-```
-
-### Generation Parameters
-
-- **`--temperature`** (default: 0.8)
-  - Controls randomness: lower = more deterministic, higher = more creative
-  - Range: 0.0 (greedy) to 2.0+
-  - Sweet spot: 0.7-1.0
-
-- **`--top-k`** (default: 40)
-  - Only sample from top k most likely tokens
-  - Prevents sampling unlikely tokens
-  - Common values: 20-50
-
-- **`--top-p`** (default: 0.9)
-  - Nucleus sampling: sample from tokens comprising top p probability mass
-  - Range: 0.0-1.0
-  - Common values: 0.9-0.95
-
-## Checkpointing
-
-### Automatic Checkpointing
-
-Checkpoints are automatically saved every `checkpoint_interval` iterations (default: 1000).
-
-Each checkpoint contains:
-- Model weights
-- Optimizer state
-- Training iteration
-- Configuration
-- Loss values
-
-### Checkpoint Management
-
-Only the last N checkpoints are kept (default: 5) to save disk space.
-
-Checkpoints are named: `checkpoint_iter_{iteration}.pt`
-
-Example:
-```
-checkpoints/
-├── checkpoint_iter_1000.pt
-├── checkpoint_iter_2000.pt
-├── checkpoint_iter_3000.pt
-├── checkpoint_iter_4000.pt
-└── checkpoint_iter_5000.pt  (latest)
-```
-
-### Manual Checkpoint Loading
-
-```python
-from yagpt import load_model_from_checkpoint
-
-model, tokenizer = load_model_from_checkpoint(
-    checkpoint_path="./checkpoints/checkpoint_iter_5000.pt",
-    device="cuda"
-)
-
-# Now use the model for generation or fine-tuning
-```
-
-## Model Sizes
-
-### Mini (Default)
-```python
-from yagpt import create_gpt_mini
-model = create_gpt_mini()
-```
-- Parameters: ~85M
-- Layers: 12, Heads: 12, Dim: 768
-- Memory: ~1GB
-- Good for: Experimentation, small datasets
-
-### Custom Size
-```python
-from yagpt import GPT, GPTConfig
-
+# Create model
 config = GPTConfig(
-    n_layer=48,
-    n_head=24,
-    n_embd=2048,
-    # ... other params
+    vocab_size=50257,
+    n_layers=12,
+    n_heads=12,
+    dim=768,
 )
 model = GPT(config)
+
+# Generate text
+tokenizer = Tokenizer("gpt2")
+tokens = tokenizer.encode("Hello, world!")
+input_ids = torch.tensor([tokens])
+
+output = model.generate(input_ids, max_new_tokens=50)
+print(tokenizer.decode(output[0].tolist()))
 ```
 
-## Training Tips
+### Training
 
-### Memory Optimization
-
-If you run out of memory:
-
-1. **Reduce batch size**:
-   ```python
-   config.batch_size = 4
-   ```
-
-2. **Increase gradient accumulation**:
-   ```python
-   config.gradient_accumulation_steps = 8
-   # Effective batch size = 4 * 8 = 32
-   ```
-
-3. **Reduce sequence length**:
-   ```python
-   config.block_size = 1024  # Instead of 2048
-   ```
-
-4. **Enable gradient checkpointing** (implement in model.py):
-   ```python
-   torch.utils.checkpoint.checkpoint(block, x)
-   ```
-
-5. **Use mixed precision** (add to train.py):
-   ```python
-   from torch.cuda.amp import autocast, GradScaler
-   ```
-
-### Learning Rate Guidelines
-
-- **From scratch**: 3e-4 to 6e-4
-- **Fine-tuning**: 1e-4 to 3e-5
-- **Warmup**: 2000-4000 iterations recommended
-
-### Data Preparation
-
-Your data should be:
-- Sharded into parquet files
-- Each parquet has a 'text' column with raw text
-- Located in a directory (e.g., `./datasets/fineweb/`)
-
-Example data structure:
 ```python
-# Each parquet file contains:
-{
-    'text': [
-        "First document text...",
-        "Second document text...",
-        ...
-    ]
-}
+from yagpt import Trainer, TrainConfig, create_dataloader
+
+config = TrainConfig.from_yaml("configs/default.yaml")
+train_loader = create_dataloader(config.train_data_dir, ...)
+
+trainer = Trainer(config, train_loader)
+trainer.train()
 ```
 
-## Evaluation
-
-YAGPT includes a comprehensive evaluation framework for tracking model performance. See [EVALUATION.md](docs/EVALUATION.md) for complete documentation.
-
-### Metrics Tracked
-
-- **Perplexity** - Validation perplexity (exp(loss)) tracked every 5000 steps
-- **HellaSwag** - Commonsense reasoning benchmark (25% = random, 95% = GPT-4)
-- **Generation Samples** - Qualitative text generation examples
-
-### During Training
-
-Evaluation runs automatically during training every 5000 steps:
-
-```
-step   5000 | loss=3.2451 | lr=2.85e-04 | step_time_ms=234.56
-
-Running HellaSwag evaluation at iteration 5000...
-======================================================================
-HellaSwag Results:
-  Accuracy: 0.2847 (28.47%)
-  Acc (normalized): 0.2891 (28.91%)
-======================================================================
-```
-
-### Standalone Evaluation
-
-Evaluate any checkpoint on HellaSwag benchmark:
+### CLI Commands
 
 ```bash
-# Full evaluation
-yagpt eval ./checkpoints/checkpoint_iter_50000.pt
-
-# Quick test (100 examples)
-yagpt eval ./checkpoints/checkpoint_iter_50000.pt --limit 100
+yagpt train -c config.yaml     # Train model
+yagpt generate ckpt.pt -p "Hi" # Generate text
+yagpt info ckpt.pt             # Checkpoint info
+yagpt count ./data             # Count dataset tokens
 ```
 
-All metrics are logged to W&B, CSV, and console for easy tracking and comparison.
+## Configuration
 
-## Logging & Monitoring
+All settings in a single flat YAML file:
 
-YAGPT includes a flexible multi-backend logging system. See [LOGGING.md](docs/LOGGING.md) for complete documentation.
+```yaml
+# Model
+n_layers: 12
+n_heads: 12
+dim: 768
 
-### Quick Setup
+# Training
+batch_size: 32
+total_batch_size: 524288
+max_steps: 100000
 
-**Default (Console + CSV)** - No additional setup:
-```python
-config = TrainingConfig()
-# Automatically logs to console and CSV files
-train(config)
+# Optimizer
+optimizer: "dual"      # muon + adamw
+learning_rate: 3e-4
+muon_lr: 0.02
 ```
 
-**Add Weights & Biases**:
-```bash
-wandb login
-```
-```python
-config.log_backends = ['console', 'csv', 'wandb']
-config.wandb_project = "my-gpt-project"
-```
+See `configs/default.yaml` for all options.
 
-**Add TensorBoard**:
-```python
-config.log_backends = ['console', 'csv', 'tensorboard']
+## Data Format
+
+Expects parquet files with either:
+- `text` column: Raw text (tokenized on-the-fly)
+- `tokens` column: Pre-tokenized sequences (faster)
+
+## Model Architecture
+
 ```
-```bash
-tensorboard --logdir=./runs
+Input IDs
+    ↓
+Token Embedding (no position embedding - using RoPE)
+    ↓
+┌─────────────────────────────────────┐
+│  Transformer Block (×n_layers)      │
+│  ├─ RMSNorm                         │
+│  ├─ Causal Attention (RoPE, GQA)    │
+│  ├─ Residual                        │
+│  ├─ RMSNorm                         │
+│  ├─ SwiGLU MLP                      │
+│  └─ Residual                        │
+└─────────────────────────────────────┘
+    ↓
+RMSNorm
+    ↓
+LM Head (weight-tied with embeddings)
+    ↓
+Logits
 ```
-
-### Logged Metrics
-
-- **Training**: loss, learning rate, step time
-- **Validation**: loss, perplexity
-- **System**: GPU memory, throughput
-- **Config**: All hyperparameters
-
-Example console output:
-```
-step    100 | loss=3.2451 | lr=2.85e-04 | step_time_ms=234.56
-step    110 | loss=3.2123 | lr=2.86e-04 | step_time_ms=231.23
-```
-
-## License
-
-This is an educational implementation. Use for learning and experimentation.
 
 ## References
 
-1. **Attention Is All You Need** - Vaswani et al., 2017
-2. **Improving Language Understanding by Generative Pre-Training** - Radford et al., 2018 (GPT-1)
-3. **Language Models are Unsupervised Multitask Learners** - Radford et al., 2019 (GPT-2)
-4. **Language Models are Few-Shot Learners** - Brown et al., 2020 (GPT-3)
-5. **Training Compute-Optimal Large Language Models** - Hoffmann et al., 2022 (Chinchilla)
+- [Attention Is All You Need](https://arxiv.org/abs/1706.03762) - Transformer architecture
+- [RoFormer](https://arxiv.org/abs/2104.09864) - Rotary Position Embeddings
+- [RMSNorm](https://arxiv.org/abs/1910.07467) - Root Mean Square Normalization
+- [GLU Variants](https://arxiv.org/abs/2002.05202) - SwiGLU activation
+- [GQA](https://arxiv.org/abs/2305.13245) - Grouped Query Attention
+- [Muon](https://kellerjordan.github.io/posts/muon/) - Muon optimizer
 
-## Acknowledgments
+## License
 
-- Based on the GPT architecture from OpenAI
-- Inspired by Andrej Karpathy's nanoGPT
-- Uses FineWeb dataset for training
+MIT

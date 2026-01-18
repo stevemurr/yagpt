@@ -1,31 +1,38 @@
 """
-YAGPT (Yet Another GPT): Educational GPT-style language model implementation in PyTorch.
+YAGPT - Yet Another GPT
 
-This package provides a clean, well-documented implementation of a GPT-style
-transformer model for educational purposes and experimentation.
+A clean, modular GPT implementation for learning and experimentation.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-from yagpt.model import GPT, GPTConfig, create_gpt_mini, create_gpt_medium, create_gpt_large
-from yagpt.tokenizer import GPT4Tokenizer, get_tokenizer
-from yagpt.train import train, TrainingConfig
-from yagpt.generate import generate_text, load_model_from_checkpoint
-from yagpt.logger import create_logger
-from yagpt.dataloader import FineWebDataset
+# Models
+from yagpt.models import GPT, GPTConfig
+
+# Tokenizer
+from yagpt.tokenizer import Tokenizer
+
+# Training
+from yagpt.training import Trainer, TrainConfig
+
+# Optimizers
+from yagpt.optim import Muon
+
+# Data
+from yagpt.data import create_dataloader, StreamingDataset
 
 __all__ = [
+    # Models
     "GPT",
     "GPTConfig",
-    "create_gpt_mini",
-    "create_gpt_medium",
-    "create_gpt_large",
-    "GPT4Tokenizer",
-    "get_tokenizer",
-    "train",
-    "TrainingConfig",
-    "generate_text",
-    "load_model_from_checkpoint",
-    "create_logger",
-    "FineWebDataset",
+    # Tokenizer
+    "Tokenizer",
+    # Training
+    "Trainer",
+    "TrainConfig",
+    # Optimizers
+    "Muon",
+    # Data
+    "create_dataloader",
+    "StreamingDataset",
 ]

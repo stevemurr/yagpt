@@ -1,75 +1,149 @@
-"""Tests for model module."""
+"""Tests for the GPT model."""
 
 import pytest
 import torch
-from yagpt.model import GPT, GPTConfig, create_gpt_mini
+
+from yagpt.models import GPT, GPTConfig
+from yagpt.models.attention import CausalAttention
+from yagpt.models.mlp import SwiGLU
+from yagpt.models.norm import RMSNorm
+from yagpt.models.rope import apply_rope, build_rope_cache
 
 
-def test_gpt_config():
-    """Test GPTConfig creation and validation."""
-    config = GPTConfig(
-        vocab_size=100277,
-        n_layer=12,
-        n_head=12,
-        n_embd=768,
-        block_size=2048,
-    )
-    assert config.n_embd % config.n_head == 0
+class TestRMSNorm:
+    def test_output_shape(self):
+        norm = RMSNorm(dim=64)
+        x = torch.randn(2, 10, 64)
+        out = norm(x)
+        assert out.shape == x.shape
+
+    def test_normalized_output(self):
+        norm = RMSNorm(dim=64)
+        x = torch.randn(2, 10, 64)
+        out = norm(x)
+        # RMS should be approximately 1 after normalization
+        rms = (out ** 2).mean(dim=-1).sqrt()
+        assert torch.allclose(rms, torch.ones_like(rms), atol=0.1)
 
 
-def test_create_gpt_mini():
-    """Test creating a GPT mini model."""
-    model = create_gpt_mini(n_layer=2, n_head=2, n_embd=128, block_size=128)
-    assert model is not None
-    assert isinstance(model, GPT)
+class TestRoPE:
+    def test_cache_shape(self):
+        cos, sin = build_rope_cache(seq_len=128, head_dim=64)
+        assert cos.shape == (128, 64)
+        assert sin.shape == (128, 64)
+
+    def test_apply_rope_shape(self):
+        batch, seq, heads, dim = 2, 16, 8, 64
+        x = torch.randn(batch, seq, heads, dim)
+        cos, sin = build_rope_cache(seq_len=seq, head_dim=dim)
+
+        out = apply_rope(x, cos, sin)
+        assert out.shape == x.shape
+
+    def test_apply_rope_dtype(self):
+        x = torch.randn(2, 16, 8, 64, dtype=torch.bfloat16)
+        cos, sin = build_rope_cache(seq_len=16, head_dim=64)
+        out = apply_rope(x, cos, sin)
+        assert out.dtype == torch.bfloat16
 
 
-def test_model_forward():
-    """Test model forward pass."""
-    model = create_gpt_mini(n_layer=2, n_head=2, n_embd=128, block_size=128)
-    model.eval()
+class TestSwiGLU:
+    def test_output_shape(self):
+        mlp = SwiGLU(dim=64, hidden_dim=256)
+        x = torch.randn(2, 10, 64)
+        out = mlp(x)
+        assert out.shape == x.shape
 
-    # Create dummy input
-    batch_size = 2
-    seq_len = 64
-    idx = torch.randint(0, 100277, (batch_size, seq_len))
-
-    # Forward pass without targets
-    logits, loss, _ = model(idx)
-
-    assert logits.shape == (batch_size, 1, 100277)
-    assert loss is None
+    def test_default_hidden_dim(self):
+        mlp = SwiGLU(dim=64)
+        assert mlp.gate_up.out_features == 2 * 4 * 64
 
 
-def test_model_forward_with_targets():
-    """Test model forward pass with targets."""
-    model = create_gpt_mini(n_layer=2, n_head=2, n_embd=128, block_size=128)
-    model.eval()
+class TestCausalAttention:
+    def test_output_shape(self):
+        attn = CausalAttention(dim=64, n_heads=4)
+        x = torch.randn(2, 16, 64)
+        cos, sin = build_rope_cache(seq_len=16, head_dim=16)
 
-    # Create dummy input and targets
-    batch_size = 2
-    seq_len = 64
-    idx = torch.randint(0, 100277, (batch_size, seq_len))
-    targets = torch.randint(0, 100277, (batch_size, seq_len))
+        out, _ = attn(x, cos, sin)
+        assert out.shape == x.shape
 
-    # Forward pass with targets
-    logits, loss, _ = model(idx, targets)
+    def test_gqa_output_shape(self):
+        # Grouped Query Attention: 8 query heads, 2 KV heads
+        attn = CausalAttention(dim=64, n_heads=8, n_kv_heads=2)
+        x = torch.randn(2, 16, 64)
+        cos, sin = build_rope_cache(seq_len=16, head_dim=8)
 
-    assert logits.shape == (batch_size, seq_len, 100277)
-    assert loss is not None
-    assert isinstance(loss.item(), float)
+        out, _ = attn(x, cos, sin)
+        assert out.shape == x.shape
+
+    def test_kv_cache(self):
+        attn = CausalAttention(dim=64, n_heads=4)
+        cos, sin = build_rope_cache(seq_len=32, head_dim=16)
+
+        # Initial forward with full sequence
+        x1 = torch.randn(2, 16, 64)
+        _, kv_cache = attn(x1, cos[:16], sin[:16])
+
+        # Subsequent forward with single token
+        x2 = torch.randn(2, 1, 64)
+        out, new_cache = attn(x2, cos[16:17], sin[16:17], kv_cache)
+
+        assert out.shape == (2, 1, 64)
+        assert new_cache[0].shape[1] == 17  # 16 + 1 cached keys
 
 
-def test_model_generation():
-    """Test model text generation."""
-    model = create_gpt_mini(n_layer=2, n_head=2, n_embd=128, block_size=128)
-    model.eval()
+class TestGPT:
+    @pytest.fixture
+    def small_config(self):
+        return GPTConfig(
+            vocab_size=1000,
+            n_layers=2,
+            n_heads=4,
+            dim=64,
+            max_seq_len=128,
+        )
 
-    # Start with a single token
-    start_tokens = torch.tensor([[42]])
+    def test_forward_no_targets(self, small_config):
+        model = GPT(small_config)
+        x = torch.randint(0, 1000, (2, 16))
 
-    # Generate
-    with torch.no_grad():
-        generated = model.generate(start_tokens, max_new_tokens=10, temperature=0.8)
+        logits, loss, _ = model(x)
 
-    assert generated.shape == (1, 11)  # 1 start token + 10 new tokens
+        # Without targets, only returns last token logits
+        assert logits.shape == (2, 1, 1000)
+        assert loss is None
+
+    def test_forward_with_targets(self, small_config):
+        model = GPT(small_config)
+        x = torch.randint(0, 1000, (2, 16))
+        y = torch.randint(0, 1000, (2, 16))
+
+        logits, loss, _ = model(x, y)
+
+        # With targets, returns full logits
+        assert logits.shape == (2, 16, 1000)
+        assert loss is not None
+        assert loss.ndim == 0  # Scalar
+
+    def test_generate(self, small_config):
+        model = GPT(small_config)
+        model.eval()
+
+        x = torch.randint(0, 1000, (1, 4))
+
+        with torch.inference_mode():
+            output = model.generate(x, max_new_tokens=10)
+
+        assert output.shape == (1, 14)  # 4 input + 10 generated
+
+    def test_num_parameters(self, small_config):
+        model = GPT(small_config)
+        n_params = model.num_parameters()
+        assert n_params > 0
+        assert isinstance(n_params, int)
+
+    def test_weight_tying(self, small_config):
+        model = GPT(small_config)
+        # Token embeddings should share weights with lm_head
+        assert model.tok_emb.weight is model.lm_head.weight

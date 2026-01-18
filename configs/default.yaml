@@ -1,0 +1,59 @@
+# YAGPT Training Configuration
+#
+# A clean, flat configuration file. All options in one place.
+# Values shown are defaults - modify as needed.
+
+# === Model Architecture ===
+vocab_size: 50257          # GPT-2 tokenizer vocab size
+n_layers: 12               # Number of transformer layers
+n_heads: 12                # Number of attention heads
+n_kv_heads: null           # KV heads for GQA (null = same as n_heads)
+dim: 768                   # Model dimension
+hidden_dim: null           # MLP hidden dim (null = 4 * dim)
+max_seq_len: 2048          # Maximum sequence length
+
+# === Data ===
+train_data_dir: "./data/train"
+val_data_dir: "./data/val"
+tokenizer: "gpt2"          # gpt2, gpt4, or gpt4o
+
+# === Training ===
+batch_size: 32             # Micro-batch size per forward pass
+total_batch_size: 524288   # Total tokens per optimizer step (for grad accum)
+max_steps: 100000          # Total training steps
+
+# === Optimizer ===
+optimizer: "dual"          # adamw, muon, or dual (muon + adamw)
+learning_rate: 3.0e-4      # Peak LR for AdamW / embeddings
+muon_lr: 0.02              # LR for Muon optimizer
+weight_decay: 0.1
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0
+
+# === LR Schedule ===
+lr_schedule: "warmup_cosine"  # warmup_cosine, cosine, or three_phase
+warmup_ratio: 0.01            # Fraction of training for warmup
+min_lr_ratio: 0.1             # min_lr = learning_rate * min_lr_ratio
+
+# === Logging ===
+log_interval: 10
+eval_interval: 1000
+eval_steps: 50
+sample_interval: 1000      # Generate samples every N steps (0 to disable)
+use_wandb: false
+wandb_project: "yagpt"
+wandb_run_name: null
+
+# === Checkpointing ===
+checkpoint_dir: "./checkpoints"
+checkpoint_interval: 1000
+keep_checkpoints: 5
+resume_from: null          # Path to checkpoint to resume from
+
+# === System ===
+device: "cuda"
+dtype: "bfloat16"          # float32, float16, or bfloat16
+compile: true              # Use torch.compile
+num_workers: 4
+seed: 42

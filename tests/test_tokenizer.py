@@ -1,56 +1,46 @@
-"""Tests for tokenizer module."""
+"""Tests for the tokenizer."""
 
 import pytest
-from yagpt.tokenizer import GPT4Tokenizer, get_tokenizer
+
+from yagpt.tokenizer import Tokenizer
 
 
-def test_gpt4_tokenizer_creation():
-    """Test GPT4Tokenizer creation."""
-    tokenizer = GPT4Tokenizer()
-    assert tokenizer is not None
-    assert tokenizer.vocab_size == 100277
+class TestTokenizer:
+    def test_gpt2_tokenizer(self):
+        tok = Tokenizer("gpt2")
+        assert tok.vocab_size == 50257
 
+    def test_gpt4_tokenizer(self):
+        tok = Tokenizer("gpt4")
+        assert tok.vocab_size == 100277
 
-def test_tokenizer_encode():
-    """Test encoding text to tokens."""
-    tokenizer = GPT4Tokenizer()
-    text = "Hello, world!"
-    tokens = tokenizer.encode(text)
+    def test_encode_decode_roundtrip(self):
+        tok = Tokenizer("gpt2")
+        text = "Hello, world!"
 
-    assert isinstance(tokens, list)
-    assert len(tokens) > 0
-    assert all(isinstance(t, int) for t in tokens)
+        tokens = tok.encode(text)
+        decoded = tok.decode(tokens)
 
+        assert decoded == text
 
-def test_tokenizer_decode():
-    """Test decoding tokens to text."""
-    tokenizer = GPT4Tokenizer()
-    text = "Hello, world!"
-    tokens = tokenizer.encode(text)
-    decoded = tokenizer.decode(tokens)
+    def test_encode_returns_list(self):
+        tok = Tokenizer("gpt2")
+        tokens = tok.encode("test")
 
-    assert decoded == text
+        assert isinstance(tokens, list)
+        assert all(isinstance(t, int) for t in tokens)
 
+    def test_callable_interface(self):
+        tok = Tokenizer("gpt2")
 
-def test_tokenizer_call():
-    """Test tokenizer __call__ method."""
-    tokenizer = GPT4Tokenizer()
-    text = "Hello, world!"
-    tokens = tokenizer(text)
+        tokens1 = tok.encode("test")
+        tokens2 = tok("test")
 
-    assert isinstance(tokens, list)
-    assert len(tokens) > 0
+        assert tokens1 == tokens2
 
+    def test_repr(self):
+        tok = Tokenizer("gpt2")
+        repr_str = repr(tok)
 
-def test_get_tokenizer_gpt4():
-    """Test get_tokenizer for GPT-4."""
-    tokenizer = get_tokenizer("gpt4")
-    assert tokenizer is not None
-    assert tokenizer.vocab_size == 100277
-
-
-def test_get_tokenizer_gpt2():
-    """Test get_tokenizer for GPT-2."""
-    tokenizer = get_tokenizer("gpt2")
-    assert tokenizer is not None
-    assert tokenizer.vocab_size == 50257
+        assert "gpt2" in repr_str
+        assert "50257" in repr_str

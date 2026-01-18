@@ -1,1 +1,1 @@
-"""CLI scripts for GPT-Mini."""
+# CLI scripts
