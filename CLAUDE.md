@@ -19,12 +19,17 @@ YAGPT (Yet Another GPT) is a clean, educational GPT implementation in PyTorch. T
 yagpt/
 ├── models/           # Model architecture (GPT, attention, MLP, etc.)
 ├── optim/            # Optimizers (Muon) and LR schedules
-├── training/         # Trainer, config, callbacks
+├── training/         # Trainer, config, callbacks, MFU tracking
 ├── data/             # Data loading
+├── sft/              # Supervised fine-tuning (ChatML, masked loss)
+├── lora/             # LoRA and QLoRA (NF4 quantization)
+├── alignment/        # DPO, SimPO, GRPO preference optimization
+├── eval/             # lm-eval-harness integration, proxy metrics
 └── tokenizer.py      # Tiktoken wrapper
 
 scripts/
-└── cli.py            # Command-line interface
+├── cli.py            # Command-line interface
+└── prepare_data.py   # Data preparation tool
 
 tests/
 └── test_*.py         # pytest tests
@@ -36,10 +41,19 @@ configs/
 ## Key Files
 
 - `yagpt/models/gpt.py` - Main GPT model class with forward() and generate()
-- `yagpt/models/attention.py` - Causal self-attention with GQA support
+- `yagpt/models/attention.py` - Causal self-attention with GQA and QK-Norm
 - `yagpt/training/trainer.py` - Training loop with gradient accumulation
 - `yagpt/training/config.py` - Flat TrainConfig dataclass
 - `yagpt/training/callbacks.py` - Modular logging, checkpointing, eval
+- `yagpt/training/mfu.py` - Model FLOPs Utilization callback
+- `yagpt/sft/trainer.py` - SFT training loop
+- `yagpt/sft/dataset.py` - ChatML dataset with masked labels
+- `yagpt/lora/lora.py` - LoRA low-rank adaptation
+- `yagpt/lora/qlora.py` - NF4 4-bit quantization
+- `yagpt/alignment/dpo.py` - Direct Preference Optimization
+- `yagpt/alignment/grpo.py` - Group Relative Policy Optimization
+- `yagpt/alignment/simpo.py` - Simple Preference Optimization
+- `yagpt/eval/harness.py` - lm-eval-harness wrapper
 
 ## Common Tasks
 
@@ -53,10 +67,34 @@ pytest tests/
 yagpt train -c configs/default.yaml
 ```
 
+### Supervised fine-tuning
+```bash
+yagpt sft -c configs/sft.yaml --checkpoint checkpoints/final.pt
+```
+
+### Alignment
+```bash
+yagpt align checkpoints/sft.pt -d data/prefs.jsonl -m dpo
+```
+
+### Evaluation
+```bash
+yagpt eval checkpoints/final.pt --tasks hellaswag
+```
+
 ### Adding a new callback
 1. Create class inheriting from `Callback` in `training/callbacks.py`
 2. Implement desired hooks: `on_train_start`, `on_step_end`, `on_eval_end`, etc.
 3. Add to trainer's callback list
+
+### Applying LoRA / QLoRA
+```python
+from yagpt.lora import apply_lora, quantize_model_nf4
+
+# QLoRA: quantize first, then apply LoRA
+quantize_model_nf4(model)
+apply_lora(model, rank=16)
+```
 
 ### Modifying the model
 - Core architecture: `models/gpt.py`
@@ -95,10 +133,11 @@ Muon uses Newton-Schulz orthogonalization for faster convergence on dense matric
 
 ### Model Forward Signature
 ```python
-def forward(input_ids, targets=None, kv_cache=None):
+def forward(input_ids, targets=None, kv_cache=None, ignore_index=-1, return_logits=False):
     # Returns: (logits, loss, new_kv_cache)
-    # - Without targets: logits is (B, 1, vocab) for last token only
-    # - With targets: logits is (B, T, vocab) for all positions
+    # - With targets: logits is (B, T, vocab) for all positions, loss computed
+    # - With return_logits=True: logits is (B, T, vocab), no loss (for alignment)
+    # - Without targets or return_logits: logits is (B, 1, vocab) for last token only
 ```
 
 ### KV Caching

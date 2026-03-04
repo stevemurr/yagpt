@@ -41,16 +41,26 @@ logging = [
 eval = [
     "lm-eval>=0.4.0",
 ]
+data = [
+    "datasets>=2.14.0",
+]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+]
 all = [
-    "yagpt[dev,logging,eval]",
+    "yagpt[dev,logging,eval,data,web]",
 ]
 
 [project.scripts]
 yagpt = "scripts.cli:app"
+yagpt-data = "scripts.prepare_data:app"
+yagpt-web = "web.backend.app:run"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["yagpt*", "scripts*"]
+include = ["yagpt*", "scripts*", "web*"]
 
 [tool.ruff]
 line-length = 100

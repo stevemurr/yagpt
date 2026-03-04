@@ -12,6 +12,7 @@ from .callbacks import (
     WandbCallback,
 )
 from .config import TrainConfig
+from .mfu import MFUCallback
 from .trainer import Trainer
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "CheckpointCallback",
     "EvalCallback",
     "SampleCallback",
+    "MFUCallback",
 ]

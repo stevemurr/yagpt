@@ -68,10 +68,13 @@ class Trainer:
             dim=self.config.dim,
             hidden_dim=self.config.hidden_dim,
             max_seq_len=self.config.max_seq_len,
+            qk_norm=self.config.qk_norm,
+            pad_vocab_to=self.config.pad_vocab_to,
+            gradient_checkpointing=self.config.gradient_checkpointing,
         )
 
         model = GPT(model_config)
-        model = model.to(self.config.device)
+        model = model.to(device=self.config.device, dtype=self.config.torch_dtype)
 
         print(f"Model: {model.num_parameters()/1e6:.1f}M parameters")
 
@@ -93,7 +96,7 @@ class Trainer:
                 lr=self.config.learning_rate,
                 betas=(self.config.beta1, self.config.beta2),
                 weight_decay=self.config.weight_decay,
-                fused=True,
+                fused=self.config.device == "cuda",
             )
             return [optimizer]
 
@@ -111,16 +114,19 @@ class Trainer:
             embedding_params = list(base_model.tok_emb.parameters())
             embedding_ids = {id(p) for p in embedding_params}
 
-            # Transformer block parameters (for Muon)
-            transformer_params = [
+            # Transformer block parameters: Muon for 2D+ weights, AdamW for 1D (norms, biases)
+            muon_params = [
                 p for p in base_model.blocks.parameters()
+                if p.ndim >= 2
             ]
+            muon_ids = {id(p) for p in muon_params}
 
-            # Norm and any other parameters (for AdamW)
+            # Everything not in embeddings or Muon goes to AdamW
             other_params = [
                 p for p in base_model.parameters()
-                if id(p) not in embedding_ids and p not in transformer_params
+                if id(p) not in embedding_ids and id(p) not in muon_ids
             ]
+            transformer_params = muon_params
 
             # AdamW for embeddings and other params
             adamw = torch.optim.AdamW(
@@ -130,7 +136,7 @@ class Trainer:
                 ],
                 betas=(self.config.beta1, self.config.beta2),
                 weight_decay=self.config.weight_decay,
-                fused=True,
+                fused=self.config.device == "cuda",
             )
 
             # Muon for transformer blocks
@@ -152,6 +158,7 @@ class Trainer:
             min_lr=self.config.min_lr,
             total_steps=self.config.max_steps,
             warmup_steps=self.config.warmup_steps,
+            decay_ratio=self.config.decay_ratio,
         )
 
     def _load_checkpoint(self, path: str) -> None:
@@ -208,7 +215,7 @@ class Trainer:
             micro_y = y[start:end]
 
             # Forward pass with autocast
-            with torch.amp.autocast(device_type="cuda", dtype=self.config.torch_dtype):
+            with torch.amp.autocast(device_type=self.config.device, dtype=self.config.torch_dtype):
                 _, loss, _ = self.model(micro_x, micro_y)
                 loss = loss / self.config.grad_accum_steps
 
@@ -259,7 +266,7 @@ class Trainer:
             x = x.to(self.config.device)
             y = y.to(self.config.device)
 
-            with torch.amp.autocast(device_type="cuda", dtype=self.config.torch_dtype):
+            with torch.amp.autocast(device_type=self.config.device, dtype=self.config.torch_dtype):
                 _, loss, _ = self.model(x, y)
 
             total_loss += loss.item()

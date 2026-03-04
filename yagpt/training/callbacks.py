@@ -28,6 +28,7 @@ class TrainState:
     grad_norm: float | None = None
     tokens_per_sec: float | None = None
     val_loss: float | None = None
+    mfu: float | None = None
 
 
 class Callback(ABC):
@@ -77,12 +78,14 @@ class LoggingCallback(Callback):
         )
 
         grad_str = f"grad={state.grad_norm:.2f}" if state.grad_norm else ""
+        mfu_str = f" | mfu {state.mfu:.1%}" if state.mfu is not None else ""
         print(
             f"step {state.step:6d} | "
             f"loss {state.loss:.4f} | "
             f"lr {state.lr:.2e} | "
             f"{grad_str} | "
             f"{tokens_per_sec/1e6:.2f}M tok/s"
+            f"{mfu_str}"
         )
 
         self.last_log_time = now
@@ -121,6 +124,8 @@ class WandbCallback(Callback):
             metrics["train/grad_norm"] = state.grad_norm
         if state.tokens_per_sec is not None:
             metrics["train/tokens_per_sec"] = state.tokens_per_sec
+        if state.mfu is not None:
+            metrics["train/mfu"] = state.mfu
 
         self._run.log(metrics, step=state.step)
 

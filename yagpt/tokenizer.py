@@ -70,6 +70,30 @@ class Tokenizer:
         """
         return self._encoding.decode(token_ids)
 
+    def add_special_tokens(self, tokens: dict[str, int]) -> None:
+        """
+        Add special tokens to the tokenizer (e.g., ChatML tokens).
+
+        Rebuilds the tiktoken Encoding with extra special tokens.
+
+        Args:
+            tokens: Mapping of token string to token ID.
+                    e.g., {"<|im_start|>": 100264, "<|im_end|>": 100265}
+        """
+        existing_special = dict(self._encoding._special_tokens)
+        existing_special.update(tokens)
+
+        self._encoding = tiktoken.Encoding(
+            name=self._encoding.name + "_extended",
+            pat_str=self._encoding._pat_str,
+            mergeable_ranks=self._encoding._mergeable_ranks,
+            special_tokens=existing_special,
+        )
+
+    def encode_special(self, text: str) -> list[int]:
+        """Encode text allowing special tokens (e.g., <|im_start|>)."""
+        return self._encoding.encode(text, allowed_special="all")
+
     def __call__(self, text: str) -> list[int]:
         """Encode text (callable interface)."""
         return self.encode(text)

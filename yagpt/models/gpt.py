@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from .attention import CausalAttention
 from .mlp import SwiGLU
@@ -38,11 +39,23 @@ class GPTConfig:
     # Initialization
     init_std: float = 0.02  # Std for weight initialization
 
+    # Stability
+    qk_norm: bool = True  # QK-Norm on attention projections
+    pad_vocab_to: int = 64  # Pad vocab to multiple of this (0 = no padding)
+
+    # Efficiency
+    gradient_checkpointing: bool = False  # Trade compute for memory
+
     def __post_init__(self):
         if self.n_kv_heads is None:
             self.n_kv_heads = self.n_heads
         if self.hidden_dim is None:
             self.hidden_dim = 4 * self.dim
+        # Pad vocab size for GPU kernel efficiency
+        if self.pad_vocab_to > 0:
+            self.vocab_size = (
+                (self.vocab_size + self.pad_vocab_to - 1) // self.pad_vocab_to
+            ) * self.pad_vocab_to
 
 
 class Block(nn.Module):
@@ -62,6 +75,7 @@ class Block(nn.Module):
             dim=config.dim,
             n_heads=config.n_heads,
             n_kv_heads=config.n_kv_heads,
+            qk_norm=config.qk_norm,
         )
         self.mlp_norm = RMSNorm(config.dim)
         self.mlp = SwiGLU(dim=config.dim, hidden_dim=config.hidden_dim)
@@ -94,6 +108,7 @@ class GPT(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.config = config
+        self.gradient_checkpointing = config.gradient_checkpointing
 
         # Token embeddings (no position embeddings - we use RoPE)
         self.tok_emb = nn.Embedding(config.vocab_size, config.dim)
@@ -151,6 +166,8 @@ class GPT(nn.Module):
         input_ids: Tensor,
         targets: Tensor | None = None,
         kv_cache: list[tuple[Tensor, Tensor]] | None = None,
+        ignore_index: int = -1,
+        return_logits: bool = False,
     ) -> tuple[Tensor, Tensor | None, list[tuple[Tensor, Tensor]] | None]:
         """
         Forward pass.
@@ -159,6 +176,10 @@ class GPT(nn.Module):
             input_ids: Token IDs (batch, seq_len)
             targets: Target token IDs for loss computation (batch, seq_len)
             kv_cache: List of (k, v) tuples per layer for generation
+            ignore_index: Token ID to ignore in loss computation (-1 default,
+                          use -100 for SFT with masked labels)
+            return_logits: If True, return full logits without computing loss.
+                           Useful for alignment methods that need log-probs.
 
         Returns:
             Tuple of (logits, loss, new_kv_cache)
@@ -179,13 +200,19 @@ class GPT(nn.Module):
         x = self.tok_emb(input_ids)
 
         # Determine if we should return KV cache (for generation, not training)
-        return_cache = targets is None
+        return_cache = targets is None and not return_logits
 
         # Transformer blocks
         new_kv_cache = [] if return_cache else None
         for i, block in enumerate(self.blocks):
             layer_cache = kv_cache[i] if kv_cache is not None else None
-            x, new_layer_cache = block(x, cos, sin, layer_cache, return_cache)
+            if self.gradient_checkpointing and self.training and layer_cache is None:
+                x, new_layer_cache = grad_checkpoint(
+                    block, x, cos, sin, layer_cache, return_cache,
+                    use_reentrant=False,
+                )
+            else:
+                x, new_layer_cache = block(x, cos, sin, layer_cache, return_cache)
             if new_kv_cache is not None:
                 new_kv_cache.append(new_layer_cache)
 
@@ -196,12 +223,15 @@ class GPT(nn.Module):
         if targets is not None:
             # Training: compute full logits for loss
             logits = self.lm_head(x)
-            logits = logits.float()  # Upcast for stable loss computation
             loss = nn.functional.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                targets.view(-1),
-                ignore_index=-1,
+                logits.reshape(-1, logits.size(-1)),
+                targets.reshape(-1),
+                ignore_index=ignore_index,
             )
+        elif return_logits:
+            # Full logits without loss (for alignment log-prob computation)
+            logits = self.lm_head(x)
+            loss = None
         else:
             # Inference: only compute last token logits
             logits = self.lm_head(x[:, [-1], :])

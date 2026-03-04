@@ -2,7 +2,7 @@
 
 import pytest
 
-from yagpt.optim import Muon, WarmupCosineSchedule, get_lr_scheduler
+from yagpt.optim import Muon, WarmupCosineSchedule, WSDSchedule, get_lr_scheduler
 from yagpt.training import TrainConfig
 
 
@@ -64,6 +64,55 @@ class TestLRSchedule:
 
         assert callable(schedule)
         assert schedule(0) < schedule(100)
+
+
+class TestWSDSchedule:
+    def test_warmup_phase(self):
+        schedule = WSDSchedule(
+            max_lr=1e-3, min_lr=1e-5, warmup_steps=100,
+            total_steps=1000, decay_ratio=0.2,
+        )
+        # LR should increase during warmup
+        assert schedule(0) < schedule(50) < schedule(99)
+
+    def test_stable_phase(self):
+        schedule = WSDSchedule(
+            max_lr=1e-3, min_lr=1e-5, warmup_steps=100,
+            total_steps=1000, decay_ratio=0.2,
+        )
+        # After warmup, before decay (step 100 to 800), should be at max_lr
+        assert abs(schedule(100) - 1e-3) < 1e-6
+        assert abs(schedule(500) - 1e-3) < 1e-6
+        assert abs(schedule(799) - 1e-3) < 1e-6
+
+    def test_decay_phase(self):
+        schedule = WSDSchedule(
+            max_lr=1e-3, min_lr=1e-5, warmup_steps=100,
+            total_steps=1000, decay_ratio=0.2,
+        )
+        # Decay starts at step 800 (1000 * 0.8)
+        assert schedule(850) < schedule(800)
+        assert schedule(900) < schedule(850)
+        # At end, should be at min_lr
+        assert abs(schedule(1000) - 1e-5) < 1e-6
+
+    def test_factory(self):
+        schedule = get_lr_scheduler(
+            "wsd", max_lr=1e-3, min_lr=1e-5,
+            total_steps=1000, warmup_steps=100, decay_ratio=0.2,
+        )
+        assert callable(schedule)
+        assert abs(schedule(500) - 1e-3) < 1e-6
+
+
+class TestGradientCheckpointingConfig:
+    def test_config_field(self):
+        cfg = TrainConfig(gradient_checkpointing=True)
+        assert cfg.gradient_checkpointing is True
+
+    def test_config_default(self):
+        cfg = TrainConfig()
+        assert cfg.gradient_checkpointing is False
 
 
 class TestMuon:

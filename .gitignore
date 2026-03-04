@@ -29,6 +29,13 @@ datasets/
 *.pt
 *.pth
 
+# Data files
+data/
+
+# Node / Next.js
+node_modules/
+.next/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -38,3 +45,6 @@ Thumbs.db
 .coverage
 htmlcov/
 .env
+
+# Planning
+plan.md

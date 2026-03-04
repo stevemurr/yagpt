@@ -32,9 +32,15 @@ beta2: 0.95
 grad_clip: 1.0
 
 # === LR Schedule ===
-lr_schedule: "warmup_cosine"  # warmup_cosine, cosine, or three_phase
+lr_schedule: "warmup_cosine"  # warmup_cosine, cosine, three_phase, or wsd
 warmup_ratio: 0.01            # Fraction of training for warmup
 min_lr_ratio: 0.1             # min_lr = learning_rate * min_lr_ratio
+decay_ratio: 0.2              # Fraction of training for WSD decay phase
+
+# === Model Enhancements ===
+qk_norm: true                 # QK-Norm on attention projections
+gradient_checkpointing: false  # Trade compute for memory
+pad_vocab_to: 64              # Pad vocab for GPU kernel efficiency
 
 # === Logging ===
 log_interval: 10

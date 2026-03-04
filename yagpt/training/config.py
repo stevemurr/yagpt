@@ -50,9 +50,15 @@ class TrainConfig:
     grad_clip: float = 1.0
 
     # === LR Schedule ===
-    lr_schedule: Literal["warmup_cosine", "cosine", "three_phase"] = "warmup_cosine"
+    lr_schedule: Literal["warmup_cosine", "cosine", "three_phase", "wsd"] = "warmup_cosine"
     warmup_ratio: float = 0.01  # Fraction of training for warmup
     min_lr_ratio: float = 0.1  # min_lr = learning_rate * min_lr_ratio
+    decay_ratio: float = 0.2  # Fraction of training for WSD decay phase
+
+    # === Model Enhancements ===
+    gradient_checkpointing: bool = False  # Trade compute for memory
+    qk_norm: bool = True  # QK-Norm on attention projections
+    pad_vocab_to: int = 64  # Pad vocab to multiple of this for GPU efficiency
 
     # === Logging ===
     log_interval: int = 10

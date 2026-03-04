@@ -97,7 +97,7 @@ class TestGPT:
     @pytest.fixture
     def small_config(self):
         return GPTConfig(
-            vocab_size=1000,
+            vocab_size=1024,
             n_layers=2,
             n_heads=4,
             dim=64,
@@ -106,23 +106,23 @@ class TestGPT:
 
     def test_forward_no_targets(self, small_config):
         model = GPT(small_config)
-        x = torch.randint(0, 1000, (2, 16))
+        x = torch.randint(0, 1024, (2, 16))
 
         logits, loss, _ = model(x)
 
         # Without targets, only returns last token logits
-        assert logits.shape == (2, 1, 1000)
+        assert logits.shape == (2, 1, 1024)
         assert loss is None
 
     def test_forward_with_targets(self, small_config):
         model = GPT(small_config)
-        x = torch.randint(0, 1000, (2, 16))
-        y = torch.randint(0, 1000, (2, 16))
+        x = torch.randint(0, 1024, (2, 16))
+        y = torch.randint(0, 1024, (2, 16))
 
         logits, loss, _ = model(x, y)
 
         # With targets, returns full logits
-        assert logits.shape == (2, 16, 1000)
+        assert logits.shape == (2, 16, 1024)
         assert loss is not None
         assert loss.ndim == 0  # Scalar
 
@@ -130,7 +130,7 @@ class TestGPT:
         model = GPT(small_config)
         model.eval()
 
-        x = torch.randint(0, 1000, (1, 4))
+        x = torch.randint(0, 1024, (1, 4))
 
         with torch.inference_mode():
             output = model.generate(x, max_new_tokens=10)
@@ -147,3 +147,44 @@ class TestGPT:
         model = GPT(small_config)
         # Token embeddings should share weights with lm_head
         assert model.tok_emb.weight is model.lm_head.weight
+
+    def test_vocab_padding(self):
+        # 50257 should be padded to 50304 (next multiple of 64)
+        config = GPTConfig(vocab_size=50257, n_layers=2, n_heads=4, dim=64)
+        model = GPT(config)
+        assert model.lm_head.out_features == 50304
+
+    def test_vocab_padding_already_aligned(self):
+        config = GPTConfig(vocab_size=1024, n_layers=2, n_heads=4, dim=64)
+        model = GPT(config)
+        assert model.lm_head.out_features == 1024
+
+    def test_vocab_padding_disabled(self):
+        config = GPTConfig(vocab_size=50257, n_layers=2, n_heads=4, dim=64, pad_vocab_to=0)
+        model = GPT(config)
+        assert model.lm_head.out_features == 50257
+
+    def test_gradient_checkpointing(self):
+        config = GPTConfig(
+            vocab_size=1000, n_layers=2, n_heads=4, dim=64, gradient_checkpointing=True
+        )
+        model = GPT(config)
+        model.train()
+        x = torch.randint(0, 1024, (2, 16))
+        y = torch.randint(0, 1024, (2, 16))
+
+        logits, loss, _ = model(x, y)
+        assert loss is not None
+        loss.backward()  # Should work with gradient checkpointing
+
+    def test_qk_norm_enabled(self):
+        config = GPTConfig(vocab_size=1000, n_layers=2, n_heads=4, dim=64, qk_norm=True)
+        model = GPT(config)
+        # Check that QK-Norm layers exist
+        assert hasattr(model.blocks[0].attn, 'q_norm')
+        assert hasattr(model.blocks[0].attn, 'k_norm')
+
+    def test_qk_norm_disabled(self):
+        config = GPTConfig(vocab_size=1000, n_layers=2, n_heads=4, dim=64, qk_norm=False)
+        model = GPT(config)
+        assert model.blocks[0].attn.qk_norm is False

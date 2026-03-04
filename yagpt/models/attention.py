@@ -16,6 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from .norm import RMSNorm
 from .rope import apply_rope
 
 
@@ -29,6 +30,7 @@ class CausalAttention(nn.Module):
         n_kv_heads: Number of key/value heads (for GQA). If None, equals n_heads (MHA)
         head_dim: Dimension per head. If None, computed as dim // n_heads
         bias: Whether to use bias in projections
+        qk_norm: Whether to apply RMSNorm to Q and K projections before RoPE
     """
 
     def __init__(
@@ -38,6 +40,7 @@ class CausalAttention(nn.Module):
         n_kv_heads: int | None = None,
         head_dim: int | None = None,
         bias: bool = False,
+        qk_norm: bool = True,
     ):
         super().__init__()
 
@@ -56,6 +59,12 @@ class CausalAttention(nn.Module):
         self.k_proj = nn.Linear(dim, self.n_kv_heads * self.head_dim, bias=bias)
         self.v_proj = nn.Linear(dim, self.n_kv_heads * self.head_dim, bias=bias)
         self.out_proj = nn.Linear(n_heads * self.head_dim, dim, bias=bias)
+
+        # QK-Norm: stabilizes attention logits at scale
+        self.qk_norm = qk_norm
+        if qk_norm:
+            self.q_norm = RMSNorm(self.head_dim)
+            self.k_norm = RMSNorm(self.head_dim)
 
     def forward(
         self,
@@ -85,6 +94,11 @@ class CausalAttention(nn.Module):
         k = self.k_proj(x).view(batch, seq_len, self.n_kv_heads, self.head_dim)
         v = self.v_proj(x).view(batch, seq_len, self.n_kv_heads, self.head_dim)
 
+        # QK-Norm: normalize Q and K before RoPE for training stability
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
         # Apply rotary embeddings
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
@@ -113,5 +127,5 @@ class CausalAttention(nn.Module):
         )
 
         # Reshape and project output
-        y = y.transpose(1, 2).contiguous().view(batch, seq_len, -1)
+        y = y.transpose(1, 2).reshape(batch, seq_len, self.n_heads * self.head_dim)
         return self.out_proj(y), new_kv_cache

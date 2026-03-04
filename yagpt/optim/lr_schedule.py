@@ -93,6 +93,49 @@ class ThreePhaseSchedule:
         return self.min_lr + 0.5 * (self.max_lr - self.min_lr) * (1 + math.cos(math.pi * progress))
 
 
+@dataclass
+class WSDSchedule:
+    """
+    Warmup-Stable-Decay (WSD) schedule.
+
+    A practical schedule for large-scale training:
+    1. Linear warmup to max_lr
+    2. Constant at max_lr for most of training
+    3. Cosine decay to min_lr for the final decay_ratio fraction
+
+    Reference: Scaling Data-Constrained Language Models (Muennighoff et al.)
+    """
+
+    max_lr: float
+    min_lr: float
+    warmup_steps: int
+    total_steps: int
+    decay_ratio: float = 0.2  # Fraction of total steps for decay phase
+
+    @property
+    def decay_start(self) -> int:
+        return int(self.total_steps * (1 - self.decay_ratio))
+
+    def __call__(self, step: int) -> float:
+        # Phase 1: Warmup
+        if step < self.warmup_steps:
+            return self.max_lr * (step + 1) / self.warmup_steps
+
+        # Phase 3: Cosine decay
+        if step >= self.decay_start:
+            decay_steps = self.total_steps - self.decay_start
+            if decay_steps == 0:
+                return self.min_lr
+            progress = (step - self.decay_start) / decay_steps
+            progress = min(progress, 1.0)
+            return self.min_lr + 0.5 * (self.max_lr - self.min_lr) * (
+                1 + math.cos(math.pi * progress)
+            )
+
+        # Phase 2: Stable
+        return self.max_lr
+
+
 def get_lr_scheduler(
     schedule: str,
     max_lr: float,
@@ -105,7 +148,7 @@ def get_lr_scheduler(
     Factory function to create LR schedulers.
 
     Args:
-        schedule: One of "cosine", "warmup_cosine", "three_phase"
+        schedule: One of "cosine", "warmup_cosine", "three_phase", "wsd"
         max_lr: Peak learning rate
         min_lr: Minimum learning rate
         total_steps: Total training steps
@@ -135,6 +178,16 @@ def get_lr_scheduler(
             warmup_steps=warmup_steps,
             stable_steps=stable_steps,
             decay_steps=decay_steps,
+        )
+
+    elif schedule == "wsd":
+        decay_ratio = kwargs.get("decay_ratio", 0.2)
+        return WSDSchedule(
+            max_lr=max_lr,
+            min_lr=min_lr,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            decay_ratio=decay_ratio,
         )
 
     else:
