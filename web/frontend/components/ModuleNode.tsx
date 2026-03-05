@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Node } from './Node';
 import { LossChart } from './LossChart';
 import { FieldRenderer } from './fields/FieldRenderer';
@@ -13,7 +13,7 @@ import type { StageStatus } from '@/lib/types';
 
 interface Props {
   definition: ModuleDefinition;
-  onPosChange: (id: string, x: number, y: number, w: number, h: number) => void;
+  onRemove?: () => void;
 }
 
 // Map api function names to actual api functions
@@ -22,8 +22,8 @@ const apiMap: Record<string, (body: unknown) => Promise<unknown>> = {
   startPretrain: (body) => api.startPretrain(body as Record<string, unknown>),
   stopPretrain: () => api.stopPretrain(),
   startSFT: (body) => {
-    const b = body as { checkpoint: string; config: Record<string, unknown> };
-    return api.startSFT(b.checkpoint, b.config);
+    const b = body as { checkpoint: string; config: Record<string, unknown>; experiment_id?: number };
+    return api.startSFT(b.checkpoint, { ...b.config, ...(b.experiment_id != null ? { experiment_id: b.experiment_id } : {}) });
   },
   stopSFT: () => api.stopSFT(),
   applyLoRA: (body) => api.applyLoRA(body as Parameters<typeof api.applyLoRA>[0]),
@@ -52,21 +52,43 @@ function isFieldVisible(field: FieldDefWithVisibility, config: Record<string, un
   return val === field.visibleWhen.value;
 }
 
-export function ModuleNode({ definition: def, onPosChange }: Props) {
+export function ModuleNode({ definition: def, onRemove }: Props) {
   const stageState = useStore((s) => s.stages[def.id]);
   const status = stageState.status;
   const currentStep = stageState.currentStep;
   const metrics = useStore((s) => s.metrics[def.metricsKey || ''] || []);
   const activeCheckpoint = useStore((s) => s.activeCheckpoint);
+  const activeModuleIds = useStore((s) => s.activeModuleIds);
   const setStageStatus = useStore((s) => s.setStageStatus);
   const evalResults = useStore((s) => s.evalResults);
   const loraInfo = useStore((s) => s.loraInfo);
+
+  // When pretrain is in the grid and this module has a 'checkpoint' field,
+  // lock it to the pretrain output — user cannot override.
+  const pretrainInChain = activeModuleIds.includes('pretrain') && def.id !== 'pretrain';
+  const hasCheckpointField = def.fields.some((f) => f.key === 'checkpoint');
+  const checkpointLocked = pretrainInChain && hasCheckpointField;
+
+  const setModuleConfig = useStore((s) => s.setModuleConfig);
+  const configLoadTick = useStore((s) => s.configLoadTick);
 
   const initialConfig = useMemo(() => buildDefaults(def.fields, def.hiddenDefaults), [def]);
   const [config, setConfig] = useState<Record<string, unknown>>(initialConfig);
   const [error, setError] = useState<string | null>(null);
   const [localState, setLocalStateRaw] = useState<Record<string, unknown>>({});
   const [generating, setGenerating] = useState(false);
+
+  // When an experiment is loaded (configLoadTick changes), pull saved config from store
+  const prevTickRef = useRef(configLoadTick);
+  useEffect(() => {
+    if (configLoadTick !== prevTickRef.current) {
+      prevTickRef.current = configLoadTick;
+      const saved = useStore.getState().moduleConfigs[def.id];
+      if (saved) {
+        setConfig((prev) => ({ ...prev, ...saved }));
+      }
+    }
+  }, [configLoadTick, def.id]);
 
   const setLocalState = useCallback((key: string, value: unknown) => {
     setLocalStateRaw((s) => ({ ...s, [key]: value }));
@@ -79,6 +101,11 @@ export function ModuleNode({ definition: def, onPosChange }: Props) {
       def.onMount(storeSnapshot, setLocalState);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync config to store whenever it changes (for experiment persistence)
+  useEffect(() => {
+    setModuleConfig(def.id, config);
+  }, [config, def.id, setModuleConfig]);
 
   const updateConfig = useCallback((key: string, value: unknown) => {
     setConfig((prev) => {
@@ -106,11 +133,21 @@ export function ModuleNode({ definition: def, onPosChange }: Props) {
 
   // --- Action handlers ---
 
+  const currentExperimentId = useStore((s) => s.currentExperimentId);
+
   const executeApi = useCallback(async (apiCallKey: string, payload: Record<string, unknown>) => {
     const fn = apiMap[apiCallKey];
     if (!fn) throw new Error(`Unknown API: ${apiCallKey}`);
+    // Force checkpoint from pretrain when locked
+    if (checkpointLocked && activeCheckpoint) {
+      payload = { ...payload, checkpoint: activeCheckpoint };
+    }
+    // Inject experiment_id for run tracking
+    if (currentExperimentId != null) {
+      payload = { ...payload, experiment_id: currentExperimentId };
+    }
     return await fn(payload);
-  }, []);
+  }, [currentExperimentId, checkpointLocked, activeCheckpoint]);
 
   const handleFireAction = useCallback(async () => {
     if (def.actions.type !== 'fire') return;
@@ -170,7 +207,7 @@ export function ModuleNode({ definition: def, onPosChange }: Props) {
   }, [def, config, storeSnapshot, localState, executeApi]);
 
   const handleResetToIdle = useCallback(() => {
-    setStageStatus(def.id as Parameters<typeof setStageStatus>[0], 'idle');
+    setStageStatus(def.id, 'idle');
     if (def.metricsKey) {
       useStore.getState().clearMetrics(def.metricsKey);
     }
@@ -226,6 +263,26 @@ export function ModuleNode({ definition: def, onPosChange }: Props) {
     const visibleFields = def.fields.filter((f) => isFieldVisible(f, config));
 
     return visibleFields.map((field) => {
+      // Locked checkpoint: show static display linked to pretrain
+      if (checkpointLocked && field.key === 'checkpoint') {
+        const display = activeCheckpoint
+          ? activeCheckpoint.split('/').pop() || activeCheckpoint
+          : 'waiting for pretrain...';
+        return (
+          <div key={field.key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '9px', color: '#999', minWidth: field.type === 'checkpoint' ? (field as { minWidth?: string }).minWidth || '45px' : '45px' }}>ckpt</span>
+            <span style={{
+              flex: 1, padding: '4px 6px', fontSize: '10px', fontFamily: 'inherit',
+              color: activeCheckpoint ? '#22c55e' : '#bbb',
+              background: '#f8fdf8', border: '1px solid #e0e0e0', borderRadius: '3px',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {activeCheckpoint ? `↳ ${display}` : display}
+            </span>
+          </div>
+        );
+      }
+
       // Handle inline textarea + fire button
       if (inlineFieldKey && field.key === inlineFieldKey && field.type === 'textarea') {
         return (
@@ -340,13 +397,10 @@ export function ModuleNode({ definition: def, onPosChange }: Props) {
   return (
     <Node
       id={def.id}
-      x={def.position.x}
-      y={def.position.y}
-      w={def.width}
       title={def.title}
       status={nodeStatus}
       accent={def.accent}
-      onPosChange={onPosChange}
+      onRemove={onRemove}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {/* Fields (always visible for fire/multi, idle-only for start-stop) */}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import traceback
 from pathlib import Path
@@ -156,6 +157,106 @@ async def validate_data(req: ValidateRequest) -> dict:
             from scripts.prepare_data import do_validate
             do_validate(data_dir=Path(req.data_dir))
             pipeline.broadcast_status("data", "done")
+        except Exception as e:
+            pipeline.broadcast_status("data", "error", error=str(e))
+            traceback.print_exc()
+
+    thread = threading.Thread(target=run, daemon=True)
+    pipeline.active_thread = thread
+    thread.start()
+    return {"status": "started"}
+
+
+# ---------------------------------------------------------------------------
+# SFT data routes
+# ---------------------------------------------------------------------------
+
+
+class SFTDownloadRequest(BaseModel):
+    output_dir: str = "./data/sft"
+    dataset: str = "OpenOrca"
+    subset: str | None = None
+    max_rows: int | None = None
+
+
+class SFTValidateRequest(BaseModel):
+    data_path: str = "./data/sft/OpenOrca.jsonl"
+
+
+@router.get("/sft/datasets")
+async def sft_datasets() -> dict:
+    """Return available SFT datasets and any already-downloaded JSONL files."""
+    from scripts.prepare_data import SFT_DATASETS
+
+    available = {k: {"repo": v["repo"]} for k, v in SFT_DATASETS.items()}
+
+    downloaded: list[dict] = []
+    sft_dir = Path("./data/sft")
+    if sft_dir.is_dir():
+        for f in sorted(sft_dir.glob("*.jsonl")):
+            rows = sum(1 for line in open(f) if line.strip())
+            downloaded.append({
+                "name": f.stem,
+                "path": str(f),
+                "rows": rows,
+            })
+
+    return {"available": available, "downloaded": downloaded}
+
+
+@router.post("/sft/download")
+async def sft_download(req: SFTDownloadRequest) -> dict:
+    if pipeline.is_busy():
+        raise HTTPException(status_code=409, detail="A job is already running")
+
+    pipeline.broadcast_status("data", "running")
+
+    def run() -> None:
+        try:
+            from scripts.prepare_data import do_download_sft
+
+            def on_progress(current: int, total: int, rows: int) -> None:
+                pipeline.broadcast_status(
+                    "data", "running",
+                    progress=current, total=max(total, 1), rows=rows,
+                    message=f"Downloaded {rows:,} rows",
+                )
+
+            do_download_sft(
+                output_dir=Path(req.output_dir),
+                dataset=req.dataset,
+                subset=req.subset,
+                max_rows=req.max_rows,
+                on_progress=on_progress,
+            )
+            pipeline.broadcast_status("data", "done")
+        except Exception as e:
+            pipeline.broadcast_status("data", "error", error=str(e))
+            traceback.print_exc()
+
+    thread = threading.Thread(target=run, daemon=True)
+    pipeline.active_thread = thread
+    thread.start()
+    return {"status": "started"}
+
+
+@router.post("/sft/validate")
+async def sft_validate(req: SFTValidateRequest) -> dict:
+    if pipeline.is_busy():
+        raise HTTPException(status_code=409, detail="A job is already running")
+
+    pipeline.broadcast_status("data", "running")
+
+    def run() -> None:
+        try:
+            from scripts.prepare_data import do_validate_sft
+            result = do_validate_sft(data_path=Path(req.data_path))
+            pipeline.broadcast_status(
+                "data", "done",
+                rows=result["rows"],
+                avg_turns=result["avg_turns"],
+                issues=len(result["issues"]),
+            )
         except Exception as e:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()

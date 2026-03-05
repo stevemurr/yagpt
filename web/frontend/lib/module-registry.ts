@@ -9,14 +9,12 @@ import { LoRAInfoSlot } from '@/components/slots/LoRAInfoSlot';
 import { EvalResultsSlot } from '@/components/slots/EvalResultsSlot';
 import { GenerateOutputSlot } from '@/components/slots/GenerateOutputSlot';
 
-// --- DataPrep ---
+// --- DataPrep (used by DataModal, not in grid) ---
 
-const dataPrepModule: ModuleDefinition = {
+export const dataPrepModule: ModuleDefinition = {
   id: 'data',
   title: 'Data Prep',
   accent: '#8b5cf6',
-  position: { x: 60, y: 80 },
-  width: 260,
   fields: [
     {
       type: 'select', key: 'subset', label: 'subset',
@@ -82,8 +80,6 @@ const pretrainModule: ModuleDefinition = {
   id: 'pretrain',
   title: 'Pretrain',
   accent: '#22c55e',
-  position: { x: 350, y: 80 },
-  width: 310,
   fields: [
     { type: 'slider', key: 'n_layers', label: 'layers', min: 1, max: 96, step: 1, default: 6, parse: 'int', minWidth: '50px', valueMinWidth: '50px' },
     { type: 'slider', key: 'n_heads', label: 'heads', min: 1, max: 96, step: 1, default: 6, parse: 'int', minWidth: '50px', valueMinWidth: '50px' },
@@ -106,6 +102,36 @@ const pretrainModule: ModuleDefinition = {
     { type: 'text', key: 'checkpoint_dir', label: 'save to', default: './checkpoints', placeholder: './checkpoints', minWidth: '50px' },
     { type: 'slider', key: 'checkpoint_interval', label: 'ckpt every', min: 100, max: 10000, step: 100, default: 1000, parse: 'int', minWidth: '50px', valueMinWidth: '50px' },
     { type: 'slider', key: 'keep_checkpoints', label: 'keep last', min: 1, max: 20, step: 1, default: 5, parse: 'int', minWidth: '50px', valueMinWidth: '50px' },
+  ],
+  fieldEffects: [
+    {
+      watch: 'n_heads',
+      update: (value, config) => {
+        const heads = value as number;
+        const dim = config.dim as number;
+        if (heads > 0 && dim % heads !== 0) {
+          // Snap dim to nearest multiple of heads (within slider range)
+          const snapped = Math.round(dim / heads) * heads;
+          const clamped = Math.max(64, Math.min(8192, snapped || heads));
+          return { dim: clamped };
+        }
+        return {};
+      },
+    },
+    {
+      watch: 'dim',
+      update: (value, config) => {
+        const dim = value as number;
+        const heads = config.n_heads as number;
+        if (heads > 0 && dim % heads !== 0) {
+          // Snap dim to nearest multiple of heads
+          const snapped = Math.round(dim / heads) * heads;
+          const clamped = Math.max(64, Math.min(8192, snapped || heads));
+          return { dim: clamped };
+        }
+        return {};
+      },
+    },
   ],
   hiddenDefaults: {
     total_batch_size: 524288,
@@ -144,8 +170,6 @@ const sftModule: ModuleDefinition = {
   id: 'sft',
   title: 'SFT',
   accent: '#f59e0b',
-  position: { x: 690, y: 80 },
-  width: 280,
   fields: [
     { type: 'checkpoint', key: 'checkpoint', label: 'ckpt', default: '', placeholder: './checkpoints/final.pt', minWidth: '60px' },
     { type: 'text', key: 'data_path', label: 'data', default: './data/sft', minWidth: '60px' },
@@ -179,8 +203,6 @@ const loraModule: ModuleDefinition = {
   id: 'lora',
   title: 'LoRA',
   accent: '#ec4899',
-  position: { x: 1000, y: 80 },
-  width: 260,
   fields: [
     { type: 'checkpoint', key: 'checkpoint', label: 'ckpt', default: '', placeholder: 'checkpoint path', minWidth: '45px' },
     { type: 'slider', key: 'rank', label: 'rank', min: 1, max: 128, step: 1, default: 16, parse: 'int', minWidth: '45px', valueMinWidth: '30px' },
@@ -220,8 +242,6 @@ const alignModule: ModuleDefinition = {
   id: 'align',
   title: 'Alignment',
   accent: '#8b5cf6',
-  position: { x: 690, y: 420 },
-  width: 280,
   fields: [
     {
       type: 'select', key: 'method', label: 'method',
@@ -285,8 +305,6 @@ const evalModule: ModuleDefinition = {
   id: 'eval',
   title: 'Eval',
   accent: '#06b6d4',
-  position: { x: 1000, y: 420 },
-  width: 280,
   fields: [
     { type: 'checkpoint', key: 'checkpoint', label: 'ckpt', default: '', placeholder: 'checkpoint', minWidth: '50px' },
     {
@@ -324,8 +342,6 @@ const generateModule: ModuleDefinition = {
   id: 'generate',
   title: 'Generate',
   accent: '#06b6d4',
-  position: { x: 1310, y: 420 },
-  width: 300,
   fields: [
     { type: 'checkpoint', key: 'checkpoint', label: 'ckpt', default: '', placeholder: 'checkpoint path', minWidth: '45px' },
     { type: 'textarea', key: 'prompt', label: 'prompt', default: '', placeholder: 'type a prompt...', rows: 2, onSubmit: true },
@@ -359,8 +375,8 @@ const generateModule: ModuleDefinition = {
   },
 };
 
+// Grid modules (data is excluded - it's in the Data modal)
 export const moduleRegistry: ModuleDefinition[] = [
-  dataPrepModule,
   pretrainModule,
   sftModule,
   loraModule,

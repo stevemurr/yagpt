@@ -1,18 +1,14 @@
 'use client';
 
 import { ReactNode } from 'react';
-import { useDraggable } from '@/hooks/useDrag';
 import type { StageStatus } from '@/lib/types';
 
 interface NodeProps {
   id: string;
-  x: number;
-  y: number;
-  w: number;
   title: string;
   status?: StageStatus;
   accent?: string;
-  onPosChange: (id: string, x: number, y: number, w: number, h: number) => void;
+  onRemove?: () => void;
   children: ReactNode;
 }
 
@@ -25,29 +21,20 @@ const STATUS_COLORS: Record<StageStatus, string> = {
   stopped: '#f59e0b',
 };
 
-export function Node({ id, x, y, w, title, status = 'idle', accent, onPosChange, children }: NodeProps) {
-  const { pos, onMouseDown, ref } = useDraggable(x, y, id, onPosChange);
+export function Node({ id, title, status = 'idle', accent, onRemove, children }: NodeProps) {
   const active = status !== 'idle';
   const color = accent || STATUS_COLORS[status] || '#333';
 
   return (
     <div
-      ref={ref}
-      onMouseDown={onMouseDown}
       style={{
-        position: 'absolute',
-        left: pos.x,
-        top: pos.y,
-        width: w,
+        width: '100%',
         background: '#fff',
         borderRadius: '3px',
         border: `1px solid ${active ? color + '40' : '#e0e0e0'}`,
         boxShadow: active
           ? `0 2px 12px ${color}15`
           : '0 1px 3px rgba(0,0,0,0.04)',
-        cursor: 'grab',
-        userSelect: 'none',
-        zIndex: 10,
         transition: 'border-color 0.3s, box-shadow 0.3s',
       }}
     >
@@ -90,6 +77,24 @@ export function Node({ id, x, y, w, title, status = 'idle', accent, onPosChange,
         )}
         {status === 'error' && (
           <span style={{ fontSize: '8px', color: '#ef4444', letterSpacing: '1px' }}>ERROR</span>
+        )}
+        {onRemove && status === 'idle' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '12px',
+              color: '#ccc',
+              padding: '0 2px',
+              lineHeight: 1,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+            title="Remove module"
+          >
+            ×
+          </button>
         )}
       </div>
       <div style={{ padding: '12px', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px' }}>

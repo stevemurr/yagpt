@@ -1,7 +1,7 @@
 'use client';
 
-import { Canvas } from '@/components/Canvas';
+import { Dashboard } from '@/components/Dashboard';
 
 export default function Home() {
-  return <Canvas />;
+  return <Dashboard />;
 }

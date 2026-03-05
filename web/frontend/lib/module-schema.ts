@@ -164,8 +164,6 @@ export interface ModuleDefinition {
   id: StageId;
   title: string;
   accent: string;
-  position: { x: number; y: number };
-  width: number;
   fields: FieldDefWithVisibility[];
   hiddenDefaults?: Record<string, unknown>;
   fieldEffects?: FieldEffect[];

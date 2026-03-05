@@ -30,8 +30,13 @@ export const generate = (body: {
 }) => request<import('./types').GenerateResponse>('/generate', { method: 'POST', body: JSON.stringify(body) });
 
 // Pretrain
-export const startPretrain = (config: Record<string, unknown>) =>
-  request<{ status: string }>('/pretrain/start', { method: 'POST', body: JSON.stringify({ config }) });
+export const startPretrain = (config: Record<string, unknown>) => {
+  const { experiment_id, ...rest } = config;
+  return request<{ status: string }>('/pretrain/start', {
+    method: 'POST',
+    body: JSON.stringify({ config: rest, ...(experiment_id != null ? { experiment_id } : {}) }),
+  });
+};
 
 export const stopPretrain = () =>
   request<{ status: string }>('/pretrain/stop', { method: 'POST' });
@@ -46,8 +51,13 @@ export const pretrainConfigSchema = () =>
   request<Record<string, { type: string; default: unknown }>>('/pretrain/config/schema');
 
 // SFT
-export const startSFT = (checkpoint: string, config: Record<string, unknown>) =>
-  request<{ status: string }>('/sft/start', { method: 'POST', body: JSON.stringify({ checkpoint, config }) });
+export const startSFT = (checkpoint: string, config: Record<string, unknown>) => {
+  const { experiment_id, ...rest } = config;
+  return request<{ status: string }>('/sft/start', {
+    method: 'POST',
+    body: JSON.stringify({ checkpoint, config: rest, ...(experiment_id != null ? { experiment_id } : {}) }),
+  });
+};
 
 export const stopSFT = () =>
   request<{ status: string }>('/sft/stop', { method: 'POST' });
@@ -65,7 +75,7 @@ export const loraInfo = () =>
 export const startAlignment = (body: {
   checkpoint?: string; data_path: string; method?: string; beta?: number;
   lr?: number; max_steps?: number; batch_size?: number; gamma?: number;
-  group_size?: number; output_dir?: string;
+  group_size?: number; output_dir?: string; experiment_id?: number;
 }) => request<{ status: string; method: string }>('/alignment/start', { method: 'POST', body: JSON.stringify(body) });
 
 export const stopAlignment = () =>
@@ -73,7 +83,7 @@ export const stopAlignment = () =>
 
 // Eval
 export const runEval = (body: {
-  checkpoint?: string; tasks?: string; batch_size?: number; num_fewshot?: number;
+  checkpoint?: string; tasks?: string; batch_size?: number; num_fewshot?: number; experiment_id?: number;
 }) => request<{ status: string }>('/eval/run', { method: 'POST', body: JSON.stringify(body) });
 
 export const evalResults = () =>
@@ -96,3 +106,14 @@ export const tokenizeData = (body: {
 
 export const validateData = (body: { data_dir?: string }) =>
   request<{ status: string }>('/data/validate', { method: 'POST', body: JSON.stringify(body) });
+
+// SFT Data
+export const downloadSFTData = (body: {
+  output_dir?: string; dataset?: string; subset?: string; max_rows?: number;
+}) => request<{ status: string }>('/data/sft/download', { method: 'POST', body: JSON.stringify(body) });
+
+export const validateSFTData = (body: { data_path?: string }) =>
+  request<{ status: string }>('/data/sft/validate', { method: 'POST', body: JSON.stringify(body) });
+
+export const listSFTDatasets = () =>
+  request<{ available: Record<string, { repo: string }>; downloaded: { name: string; path: string; rows: number }[] }>('/data/sft/datasets');

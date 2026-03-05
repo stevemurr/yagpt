@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ..state import pipeline
 from ..callbacks import WebSocketCallback
+from .. import db
 
 router = APIRouter()
 
@@ -18,6 +19,7 @@ router = APIRouter()
 class SFTStartRequest(BaseModel):
     checkpoint: str
     config: dict[str, Any] = {}
+    experiment_id: int | None = None
 
 
 @router.post("/start")
@@ -27,6 +29,17 @@ async def start_sft(req: SFTStartRequest) -> dict:
 
     pipeline.stop_event.clear()
     pipeline.metrics["sft"].clear()
+
+    # Create run record if experiment_id provided
+    run_id: int | None = None
+    if req.experiment_id:
+        try:
+            run = await db.create_run(req.experiment_id, "sft", {**req.config, "checkpoint": req.checkpoint})
+            run_id = run["id"]
+            pipeline.current_experiment_id = req.experiment_id
+            pipeline.current_run_id = run_id
+        except Exception:
+            pass
 
     def run_sft() -> None:
         try:
@@ -56,9 +69,22 @@ async def start_sft(req: SFTStartRequest) -> dict:
 
             if not pipeline.stop_event.is_set():
                 pipeline.broadcast_status("sft", "done")
+
+            if run_id:
+                metrics = list(pipeline.metrics["sft"])
+                summary = {"final_loss": metrics[-1]["loss"]} if metrics else {}
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "completed", summary))
+                except Exception:
+                    pass
         except Exception as e:
             pipeline.broadcast_status("sft", "error", error=str(e))
             traceback.print_exc()
+            if run_id:
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "failed", {"error": str(e)}))
+                except Exception:
+                    pass
 
     thread = threading.Thread(target=run_sft, daemon=True)
     pipeline.active_thread = thread

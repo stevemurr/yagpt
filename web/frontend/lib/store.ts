@@ -1,14 +1,14 @@
 import { create } from 'zustand';
-import type { StageId, StageStatus, MetricPoint, NodePosition, EvalTaskResult } from './types';
+import type { StageId, StageStatus, MetricPoint, EvalTaskResult } from './types';
 
 interface PipelineStore {
-  // Node positions (for dragging)
-  nodePositions: Record<string, NodePosition>;
-  updateNodePosition: (id: string, x: number, y: number, w: number, h: number) => void;
-  positionTick: number;
+  // Active modules in the grid
+  activeModuleIds: string[];
+  addModule: (id: string) => void;
+  removeModule: (id: string) => void;
 
   // Stage statuses
-  stages: Record<StageId, { status: StageStatus; currentStep?: number; maxSteps?: number; error?: string }>;
+  stages: Record<StageId, { status: StageStatus; currentStep?: number; maxSteps?: number; error?: string; [key: string]: unknown }>;
   setStageStatus: (stage: StageId, status: StageStatus, extra?: Record<string, unknown>) => void;
 
   // Training metrics (appended from WebSocket)
@@ -35,9 +35,25 @@ interface PipelineStore {
   // WebSocket connected
   wsConnected: boolean;
   setWsConnected: (connected: boolean) => void;
+
+  // Data modal
+  dataModalOpen: boolean;
+  setDataModalOpen: (open: boolean) => void;
+
+  // Current experiment
+  currentExperimentId: number | null;
+  setCurrentExperimentId: (id: number | null) => void;
+
+  // Module configs (synced from ModuleNode local state for persistence)
+  moduleConfigs: Record<string, Record<string, unknown>>;
+  setModuleConfig: (moduleId: string, config: Record<string, unknown>) => void;
+  setAllModuleConfigs: (configs: Record<string, Record<string, unknown>>) => void;
+
+  // Bumped when an experiment is loaded to signal ModuleNodes to re-read configs
+  configLoadTick: number;
 }
 
-const defaultStages: Record<StageId, { status: StageStatus }> = {
+const defaultStages: Record<string, { status: StageStatus }> = {
   data: { status: 'idle' },
   pretrain: { status: 'idle' },
   sft: { status: 'idle' },
@@ -48,12 +64,14 @@ const defaultStages: Record<StageId, { status: StageStatus }> = {
 };
 
 export const useStore = create<PipelineStore>((set) => ({
-  nodePositions: {},
-  positionTick: 0,
-  updateNodePosition: (id, x, y, w, h) =>
+  activeModuleIds: ['pretrain'],
+  addModule: (id) =>
     set((s) => ({
-      nodePositions: { ...s.nodePositions, [id]: { x, y, w, h } },
-      positionTick: s.positionTick + 1,
+      activeModuleIds: s.activeModuleIds.includes(id) ? s.activeModuleIds : [...s.activeModuleIds, id],
+    })),
+  removeModule: (id) =>
+    set((s) => ({
+      activeModuleIds: s.activeModuleIds.filter((m) => m !== id),
     })),
 
   stages: defaultStages,
@@ -87,4 +105,19 @@ export const useStore = create<PipelineStore>((set) => ({
 
   wsConnected: false,
   setWsConnected: (connected) => set({ wsConnected: connected }),
+
+  dataModalOpen: false,
+  setDataModalOpen: (open) => set({ dataModalOpen: open }),
+
+  currentExperimentId: null,
+  setCurrentExperimentId: (id) => set({ currentExperimentId: id }),
+
+  moduleConfigs: {},
+  setModuleConfig: (moduleId, config) =>
+    set((s) => ({
+      moduleConfigs: { ...s.moduleConfigs, [moduleId]: config },
+    })),
+  setAllModuleConfigs: (configs) => set({ moduleConfigs: configs, configLoadTick: Date.now() }),
+
+  configLoadTick: 0,
 }));

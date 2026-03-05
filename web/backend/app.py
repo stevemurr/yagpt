@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .state import pipeline
+from . import db
 from .ws import router as ws_router
 from .routes.generate import router as generate_router
 from .routes.checkpoints import router as checkpoints_router
@@ -20,12 +21,15 @@ from .routes.lora import router as lora_router
 from .routes.alignment import router as alignment_router
 from .routes.eval import router as eval_router
 from .routes.data import router as data_router
+from .routes.experiments import router as experiments_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     pipeline.loop = asyncio.get_running_loop()
+    await db.init_db()
     yield
+    await db.close_db()
     pipeline.clear_model()
 
 
@@ -48,6 +52,7 @@ app.include_router(lora_router, prefix="/api/lora", tags=["lora"])
 app.include_router(alignment_router, prefix="/api/alignment", tags=["alignment"])
 app.include_router(eval_router, prefix="/api/eval", tags=["eval"])
 app.include_router(data_router, prefix="/api/data", tags=["data"])
+app.include_router(experiments_router, prefix="/api/experiments", tags=["experiments"])
 
 
 @app.get("/api/health")

@@ -12,12 +12,14 @@ from pydantic import BaseModel
 
 from ..state import pipeline
 from ..callbacks import WebSocketCallback
+from .. import db
 
 router = APIRouter()
 
 
 class PretrainStartRequest(BaseModel):
     config: dict[str, Any] = {}
+    experiment_id: int | None = None
 
 
 class StatusResponse(BaseModel):
@@ -35,6 +37,17 @@ async def start_pretrain(req: PretrainStartRequest) -> dict:
     pipeline.stop_event.clear()
     pipeline.metrics["pretrain"].clear()
     pipeline.clear_model()
+
+    # Create run record if experiment_id provided
+    run_id: int | None = None
+    if req.experiment_id:
+        try:
+            run = await db.create_run(req.experiment_id, "pretrain", req.config)
+            run_id = run["id"]
+            pipeline.current_experiment_id = req.experiment_id
+            pipeline.current_run_id = run_id
+        except Exception:
+            pass  # Don't block training if DB fails
 
     def run_training() -> None:
         try:
@@ -108,9 +121,24 @@ async def start_pretrain(req: PretrainStartRequest) -> dict:
 
             if not pipeline.stop_event.is_set():
                 pipeline.broadcast_status("pretrain", "done")
+
+            # Complete run record
+            if run_id:
+                metrics = list(pipeline.metrics["pretrain"])
+                summary = {"final_loss": metrics[-1]["loss"]} if metrics else {}
+                ckpt_path = str(Path(config.checkpoint_dir) / "final.pt")
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "completed", summary, ckpt_path))
+                except Exception:
+                    pass
         except Exception as e:
             pipeline.broadcast_status("pretrain", "error", error=str(e))
             traceback.print_exc()
+            if run_id:
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "failed", {"error": str(e)}))
+                except Exception:
+                    pass
 
     thread = threading.Thread(target=run_training, daemon=True)
     pipeline.active_thread = thread

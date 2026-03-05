@@ -6,9 +6,12 @@ Commands:
     download-fineweb  Download FineWeb-Edu dataset
     tokenize          Pre-tokenize text data to token shards
     validate          Validate dataset shards
+    download-sft      Download and convert SFT dataset to ChatML JSONL
+    validate-sft      Validate SFT JSONL file
 """
 
 import glob
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -275,6 +278,226 @@ def do_validate(data_dir: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# SFT dataset downloading
+# ---------------------------------------------------------------------------
+
+SFT_DATASETS: dict[str, dict] = {
+    "OpenOrca": {"repo": "Open-Orca/OpenOrca", "format": "openorca"},
+    "Alpaca": {"repo": "tatsu-lab/alpaca", "format": "alpaca"},
+    "UltraChat": {"repo": "stingning/ultrachat", "format": "sharegpt"},
+    "SlimOrca": {"repo": "Open-Orca/SlimOrca", "format": "sharegpt"},
+}
+
+
+def _convert_openorca(row: dict) -> list[dict[str, str]]:
+    """OpenOrca format: {system_prompt, question, response} -> messages."""
+    messages: list[dict[str, str]] = []
+    if row.get("system_prompt"):
+        messages.append({"role": "system", "content": row["system_prompt"]})
+    messages.append({"role": "user", "content": row.get("question", "")})
+    messages.append({"role": "assistant", "content": row.get("response", "")})
+    return messages
+
+
+def _convert_alpaca(row: dict) -> list[dict[str, str]]:
+    """Alpaca format: {instruction, input, output} -> messages."""
+    messages: list[dict[str, str]] = []
+    user_content = row.get("instruction", "")
+    if row.get("input"):
+        user_content += "\n\n" + row["input"]
+    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "assistant", "content": row.get("output", "")})
+    return messages
+
+
+def _convert_sharegpt(row: dict) -> list[dict[str, str]]:
+    """ShareGPT format: {conversations: [{from, value}]} -> messages."""
+    role_map = {"human": "user", "gpt": "assistant", "system": "system"}
+    messages: list[dict[str, str]] = []
+    convos = row.get("conversations") or row.get("conversation") or []
+    for turn in convos:
+        role = role_map.get(turn.get("from", ""), turn.get("from", "user"))
+        messages.append({"role": role, "content": turn.get("value", "")})
+    return messages
+
+
+_FORMAT_CONVERTERS = {
+    "openorca": _convert_openorca,
+    "alpaca": _convert_alpaca,
+    "sharegpt": _convert_sharegpt,
+}
+
+
+def _detect_format(row: dict) -> str | None:
+    """Auto-detect row format for custom datasets."""
+    if "conversations" in row or "conversation" in row:
+        return "sharegpt"
+    if "instruction" in row:
+        return "alpaca"
+    if "system_prompt" in row and "question" in row:
+        return "openorca"
+    return None
+
+
+def do_download_sft(
+    output_dir: Path,
+    dataset: str,
+    subset: str | None = None,
+    max_rows: int | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> dict:
+    """Download an SFT dataset from HuggingFace and convert to ChatML JSONL.
+
+    Returns dict with {rows: int, path: str}.
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise RuntimeError(
+            "'datasets' package required. Install with: pip install datasets"
+        ) from exc
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve dataset info
+    if dataset in SFT_DATASETS:
+        info = SFT_DATASETS[dataset]
+        repo = info["repo"]
+        fmt = info["format"]
+        name = dataset
+    else:
+        repo = dataset
+        fmt = None  # will auto-detect
+        name = dataset.replace("/", "_")
+
+    console.print(f"[bold]Downloading SFT dataset: {repo}[/bold]")
+    if subset:
+        console.print(f"  Subset: {subset}")
+
+    load_kwargs: dict = {
+        "path": repo,
+        "split": "train",
+        "streaming": True,
+    }
+    if subset:
+        load_kwargs["name"] = subset
+
+    ds = load_dataset(**load_kwargs)
+
+    output_path = output_dir / f"{name}.jsonl"
+    rows_written = 0
+    converter = _FORMAT_CONVERTERS.get(fmt) if fmt else None
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
+        task = progress.add_task("Downloading...", total=None)
+
+        with open(output_path, "w") as f:
+            for row in ds:
+                # Auto-detect format on first row if needed
+                if converter is None:
+                    detected = _detect_format(row)
+                    if detected:
+                        converter = _FORMAT_CONVERTERS[detected]
+                        console.print(f"  Auto-detected format: {detected}")
+                    else:
+                        raise ValueError(
+                            f"Cannot detect format for dataset '{dataset}'. "
+                            "Fields: " + ", ".join(row.keys())
+                        )
+
+                messages = converter(row)
+                if messages:
+                    f.write(json.dumps({"messages": messages}) + "\n")
+                    rows_written += 1
+
+                if rows_written % 1000 == 0:
+                    progress.update(task, description=f"Downloaded {rows_written:,} rows")
+                    if on_progress:
+                        total = max_rows or 0
+                        on_progress(rows_written, total, rows_written)
+
+                if max_rows and rows_written >= max_rows:
+                    break
+
+    console.print(f"\n[bold green]Done![/bold green] {rows_written:,} rows -> {output_path}")
+    return {"rows": rows_written, "path": str(output_path)}
+
+
+def do_validate_sft(data_path: Path) -> dict:
+    """Validate an SFT JSONL file.
+
+    Returns dict with {rows: int, avg_turns: float, issues: list[str]}.
+    """
+    data_path = Path(data_path)
+
+    if not data_path.exists():
+        raise FileNotFoundError(f"File '{data_path}' does not exist.")
+
+    console.print(f"[bold]Validating SFT data: {data_path}[/bold]\n")
+
+    total_rows = 0
+    total_turns = 0
+    issues: list[str] = []
+
+    with open(data_path) as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                issues.append(f"Line {line_num}: invalid JSON")
+                continue
+
+            if "messages" not in obj:
+                issues.append(f"Line {line_num}: missing 'messages' key")
+                continue
+
+            messages = obj["messages"]
+            if not isinstance(messages, list):
+                issues.append(f"Line {line_num}: 'messages' is not a list")
+                continue
+
+            for i, msg in enumerate(messages):
+                if not isinstance(msg, dict):
+                    issues.append(f"Line {line_num}, msg {i}: not a dict")
+                    continue
+                if "role" not in msg:
+                    issues.append(f"Line {line_num}, msg {i}: missing 'role'")
+                if "content" not in msg:
+                    issues.append(f"Line {line_num}, msg {i}: missing 'content'")
+
+            total_rows += 1
+            total_turns += len(messages)
+
+    avg_turns = total_turns / max(total_rows, 1)
+
+    from rich.table import Table
+
+    result = Table(title="SFT Data Validation")
+    result.add_column("Metric", style="cyan")
+    result.add_column("Value", style="green")
+    result.add_row("Rows", f"{total_rows:,}")
+    result.add_row("Avg turns/row", f"{avg_turns:.1f}")
+    result.add_row("Issues", str(len(issues)))
+    console.print(result)
+
+    if issues:
+        console.print("\n[yellow]Issues found:[/yellow]")
+        for issue in issues[:20]:
+            console.print(f"  - {issue}")
+        if len(issues) > 20:
+            console.print(f"  ... and {len(issues) - 20} more")
+    else:
+        console.print("\n[bold green]All checks passed![/bold green]")
+
+    return {"rows": total_rows, "avg_turns": avg_turns, "issues": issues}
+
+
+# ---------------------------------------------------------------------------
 # Typer CLI wrappers
 # ---------------------------------------------------------------------------
 
@@ -328,6 +551,45 @@ def validate(
     """Validate dataset shards: check format, count tokens, detect issues."""
     try:
         do_validate(data_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def download_sft(
+    output_dir: Path = typer.Argument(..., help="Output directory for JSONL file"),
+    dataset: str = typer.Option(
+        "OpenOrca",
+        "--dataset", "-d",
+        help="Dataset name from registry or HuggingFace repo (e.g., user/repo)",
+    ),
+    subset: Optional[str] = typer.Option(
+        None,
+        "--subset", "-s",
+        help="HuggingFace dataset config/subset name",
+    ),
+    max_rows: Optional[int] = typer.Option(
+        None,
+        "--max-rows",
+        help="Maximum rows to download (None = all)",
+    ),
+) -> None:
+    """Download and convert an SFT dataset to ChatML JSONL."""
+    try:
+        do_download_sft(output_dir, dataset, subset, max_rows)
+    except (RuntimeError, ValueError) as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def validate_sft(
+    data_path: Path = typer.Argument(..., help="Path to SFT JSONL file"),
+) -> None:
+    """Validate an SFT JSONL file."""
+    try:
+        do_validate_sft(data_path)
     except FileNotFoundError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)

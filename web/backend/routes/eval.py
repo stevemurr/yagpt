@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..state import pipeline
+from .. import db
 
 router = APIRouter()
 
@@ -18,6 +19,7 @@ class EvalRequest(BaseModel):
     tasks: str = "hellaswag"
     batch_size: int = 8
     num_fewshot: int = 0
+    experiment_id: int | None = None
 
 
 @router.post("/run")
@@ -36,6 +38,18 @@ async def run_eval(req: EvalRequest) -> dict:
 
     pipeline.stop_event.clear()
     pipeline.broadcast_status("eval", "running")
+
+    # Create run record if experiment_id provided
+    run_id: int | None = None
+    if req.experiment_id:
+        try:
+            config_snapshot = req.model_dump(exclude={"experiment_id"})
+            run = await db.create_run(req.experiment_id, "eval", config_snapshot)
+            run_id = run["id"]
+            pipeline.current_experiment_id = req.experiment_id
+            pipeline.current_run_id = run_id
+        except Exception:
+            pass
 
     def run() -> None:
         try:
@@ -67,9 +81,20 @@ async def run_eval(req: EvalRequest) -> dict:
                 "type": "eval_complete",
                 "data": {"results": task_results},
             })
+
+            if run_id:
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "completed", eval_results=task_results))
+                except Exception:
+                    pass
         except Exception as e:
             pipeline.broadcast_status("eval", "error", error=str(e))
             traceback.print_exc()
+            if run_id:
+                try:
+                    pipeline.run_async(db.complete_run(run_id, "failed", {"error": str(e)}))
+                except Exception:
+                    pass
 
     thread = threading.Thread(target=run, daemon=True)
     pipeline.active_thread = thread

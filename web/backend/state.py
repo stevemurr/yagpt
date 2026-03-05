@@ -36,6 +36,10 @@ class PipelineState:
     active_thread: threading.Thread | None = None
     loop: asyncio.AbstractEventLoop | None = None
 
+    # Experiment tracking
+    current_experiment_id: int | None = None
+    current_run_id: int | None = None
+
     def is_busy(self) -> bool:
         return self.active_thread is not None and self.active_thread.is_alive()
 
@@ -55,6 +59,13 @@ class PipelineState:
         msg: dict[str, Any] = {"type": "status_update", "data": {"stage": stage, "status": status}}
         msg["data"].update(extra)
         self.broadcast(msg)
+
+    def run_async(self, coro: Any) -> Any:
+        """Run an async coroutine from a sync thread context."""
+        if not self.loop:
+            return None
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        return future.result(timeout=10)
 
     def load_checkpoint(self, path: str) -> dict:
         """Load a checkpoint and set up model + tokenizer."""

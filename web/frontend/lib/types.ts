@@ -1,4 +1,4 @@
-export type StageId = 'data' | 'pretrain' | 'sft' | 'lora' | 'align' | 'eval' | 'generate';
+export type StageId = string;
 export type StageStatus = 'idle' | 'running' | 'done' | 'error' | 'stopping' | 'stopped';
 
 export interface MetricPoint {
@@ -51,11 +51,4 @@ export interface LoRAInfo {
 export interface WsMessage {
   type: string;
   data: Record<string, unknown>;
-}
-
-export interface NodePosition {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
 }
