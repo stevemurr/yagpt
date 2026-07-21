@@ -110,7 +110,6 @@ const pretrainModule: ModuleDefinition = {
         const heads = value as number;
         const dim = config.dim as number;
         if (heads > 0 && dim % heads !== 0) {
-          // Snap dim to nearest multiple of heads (within slider range)
           const snapped = Math.round(dim / heads) * heads;
           const clamped = Math.max(64, Math.min(8192, snapped || heads));
           return { dim: clamped };
@@ -124,10 +123,38 @@ const pretrainModule: ModuleDefinition = {
         const dim = value as number;
         const heads = config.n_heads as number;
         if (heads > 0 && dim % heads !== 0) {
-          // Snap dim to nearest multiple of heads
           const snapped = Math.round(dim / heads) * heads;
           const clamped = Math.max(64, Math.min(8192, snapped || heads));
           return { dim: clamped };
+        }
+        return {};
+      },
+    },
+    {
+      // total_batch_size must be divisible by batch_size * max_seq_len
+      watch: 'batch_size',
+      update: (value, config) => {
+        const bs = value as number;
+        const seqLen = config.max_seq_len as number;
+        const tbs = config.total_batch_size as number;
+        const tokensPerBatch = bs * seqLen;
+        if (tokensPerBatch > 0 && tbs % tokensPerBatch !== 0) {
+          const steps = Math.max(1, Math.round(tbs / tokensPerBatch));
+          return { total_batch_size: steps * tokensPerBatch };
+        }
+        return {};
+      },
+    },
+    {
+      watch: 'max_seq_len',
+      update: (value, config) => {
+        const seqLen = value as number;
+        const bs = config.batch_size as number;
+        const tbs = config.total_batch_size as number;
+        const tokensPerBatch = bs * seqLen;
+        if (tokensPerBatch > 0 && tbs % tokensPerBatch !== 0) {
+          const steps = Math.max(1, Math.round(tbs / tokensPerBatch));
+          return { total_batch_size: steps * tokensPerBatch };
         }
         return {};
       },

@@ -282,10 +282,56 @@ def do_validate(data_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 SFT_DATASETS: dict[str, dict] = {
-    "OpenOrca": {"repo": "Open-Orca/OpenOrca", "format": "openorca"},
-    "Alpaca": {"repo": "tatsu-lab/alpaca", "format": "alpaca"},
-    "UltraChat": {"repo": "stingning/ultrachat", "format": "sharegpt"},
-    "SlimOrca": {"repo": "Open-Orca/SlimOrca", "format": "sharegpt"},
+    "OpenOrca": {
+        "repo": "Open-Orca/OpenOrca",
+        "format": "openorca",
+        "desc": "GPT-4 augmented Flan dataset, 3.2M rows",
+    },
+    "SlimOrca": {
+        "repo": "Open-Orca/SlimOrca",
+        "format": "sharegpt",
+        "desc": "Curated 500k subset of OpenOrca",
+    },
+    "Alpaca": {
+        "repo": "tatsu-lab/alpaca",
+        "format": "alpaca",
+        "desc": "52k instruction-following examples from GPT-3.5",
+    },
+    "UltraChat": {
+        "repo": "stingning/ultrachat",
+        "format": "sharegpt",
+        "desc": "1.5M multi-turn dialogues across diverse topics",
+    },
+    "Dolly": {
+        "repo": "databricks/databricks-dolly-15k",
+        "format": "dolly",
+        "desc": "15k human-written instruction/response pairs",
+    },
+    "OASST1": {
+        "repo": "OpenAssistant/oasst1",
+        "format": "oasst",
+        "desc": "66k human-annotated assistant conversation trees",
+    },
+    "ShareGPT": {
+        "repo": "anon8231489123/ShareGPT_Vicuna_unfiltered",
+        "format": "sharegpt",
+        "desc": "Cleaned real ChatGPT conversations, multi-turn",
+    },
+    "WizardLM": {
+        "repo": "WizardLMTeam/WizardLM_evol_instruct_V2_196k",
+        "format": "sharegpt",
+        "desc": "196k evolved complexity instruction data",
+    },
+    "Capybara": {
+        "repo": "LDJnr/Capybara",
+        "format": "capybara",
+        "desc": "16k high-quality multi-turn conversations",
+    },
+    "OpenHermes": {
+        "repo": "teknium/OpenHermes-2.5",
+        "format": "sharegpt",
+        "desc": "1M diverse synthetic GPT-4 conversations",
+    },
 }
 
 
@@ -321,22 +367,129 @@ def _convert_sharegpt(row: dict) -> list[dict[str, str]]:
     return messages
 
 
+def _convert_dolly(row: dict) -> list[dict[str, str]]:
+    """Dolly format: {instruction, context, response} -> messages."""
+    messages: list[dict[str, str]] = []
+    user_content = row.get("instruction", "")
+    if row.get("context"):
+        user_content += "\n\n" + row["context"]
+    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "assistant", "content": row.get("response", "")})
+    return messages
+
+
+def _convert_oasst(row: dict) -> list[dict[str, str]]:
+    """OASST format: flat row with {role, text} -> single message.
+
+    OASST stores one message per row in a tree structure. We convert
+    each row to a single turn; tree reconstruction happens at download
+    time in do_download_sft via _build_oasst_conversations.
+    """
+    role_map = {"prompter": "user", "assistant": "assistant"}
+    role = role_map.get(row.get("role", ""), "user")
+    return [{"role": role, "content": row.get("text", "")}]
+
+
+def _convert_capybara(row: dict) -> list[dict[str, str]]:
+    """Capybara format: {conversation: [{input, output}]} -> messages."""
+    messages: list[dict[str, str]] = []
+    convos = row.get("conversation") or []
+    for turn in convos:
+        if turn.get("input"):
+            messages.append({"role": "user", "content": turn["input"]})
+        if turn.get("output"):
+            messages.append({"role": "assistant", "content": turn["output"]})
+    return messages
+
+
 _FORMAT_CONVERTERS = {
     "openorca": _convert_openorca,
     "alpaca": _convert_alpaca,
     "sharegpt": _convert_sharegpt,
+    "dolly": _convert_dolly,
+    "oasst": _convert_oasst,
+    "capybara": _convert_capybara,
 }
 
 
 def _detect_format(row: dict) -> str | None:
     """Auto-detect row format for custom datasets."""
-    if "conversations" in row or "conversation" in row:
+    if "conversations" in row:
         return "sharegpt"
+    if "conversation" in row:
+        # Distinguish Capybara ({input,output}) from ShareGPT ({from,value})
+        convos = row["conversation"]
+        if convos and isinstance(convos, list) and isinstance(convos[0], dict):
+            if "input" in convos[0]:
+                return "capybara"
+            return "sharegpt"
+    if "instruction" in row and "context" in row:
+        return "dolly"
     if "instruction" in row:
         return "alpaca"
     if "system_prompt" in row and "question" in row:
         return "openorca"
+    if "message_tree_id" in row:
+        return "oasst"
     return None
+
+
+def _download_oasst(
+    ds: object,
+    output_path: Path,
+    max_rows: int | None,
+    on_progress: ProgressCallback | None,
+) -> int:
+    """Buffer OASST tree-structured data and reconstruct conversations."""
+    from collections import defaultdict
+
+    role_map = {"prompter": "user", "assistant": "assistant"}
+
+    # Buffer all messages, grouped by tree
+    trees: dict[str, list[dict]] = defaultdict(list)
+    children: dict[str | None, list[str]] = defaultdict(list)
+    msg_map: dict[str, dict] = {}
+
+    console.print("  Buffering OASST messages...")
+    for row in ds:
+        msg_id = row.get("message_id", "")
+        tree_id = row.get("message_tree_id", "")
+        trees[tree_id].append(row)
+        children[row.get("parent_id")].append(msg_id)
+        msg_map[msg_id] = row
+
+    # For each tree, walk from root to build the longest conversation path
+    rows_written = 0
+    with open(output_path, "w") as f:
+        for tree_id, msgs in trees.items():
+            # Find root (parent_id is None)
+            roots = [m for m in msgs if m.get("parent_id") is None]
+            if not roots:
+                continue
+
+            # Walk deepest path from root
+            current = roots[0]["message_id"]
+            messages: list[dict[str, str]] = []
+            while current:
+                row = msg_map[current]
+                role = role_map.get(row.get("role", ""), "user")
+                messages.append({"role": role, "content": row.get("text", "")})
+                # Pick highest-ranked child, or first child
+                kids = children.get(current, [])
+                if not kids:
+                    break
+                kids.sort(key=lambda k: msg_map[k].get("rank", 999))
+                current = kids[0]
+
+            if len(messages) >= 2:
+                f.write(json.dumps({"messages": messages}) + "\n")
+                rows_written += 1
+                if rows_written % 500 == 0 and on_progress:
+                    on_progress(rows_written, max_rows or 0, rows_written)
+                if max_rows and rows_written >= max_rows:
+                    break
+
+    return rows_written
 
 
 def do_download_sft(
@@ -388,6 +541,12 @@ def do_download_sft(
     output_path = output_dir / f"{name}.jsonl"
     rows_written = 0
     converter = _FORMAT_CONVERTERS.get(fmt) if fmt else None
+
+    # OASST is tree-structured (one message per row) — needs buffered reconstruction
+    if fmt == "oasst":
+        rows_written = _download_oasst(ds, output_path, max_rows, on_progress)
+        console.print(f"\n[bold green]Done![/bold green] {rows_written:,} conversations -> {output_path}")
+        return {"rows": rows_written, "path": str(output_path)}
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
         task = progress.add_task("Downloading...", total=None)

@@ -14,7 +14,14 @@ from ..state import pipeline
 
 router = APIRouter()
 
+# Data jobs use their own thread so they can run alongside training/SFT/etc.
+_data_thread: threading.Thread | None = None
+
 KNOWN_SUBSETS = ["sample-10BT", "sample-100BT", "CC-MAIN-2024-10"]
+
+
+def _data_busy() -> bool:
+    return _data_thread is not None and _data_thread.is_alive()
 
 
 @router.get("/status")
@@ -68,8 +75,9 @@ class ValidateRequest(BaseModel):
 
 @router.post("/download")
 async def download_data(req: DownloadRequest) -> dict:
-    if pipeline.is_busy():
-        raise HTTPException(status_code=409, detail="A job is already running")
+    global _data_thread
+    if _data_busy():
+        raise HTTPException(status_code=409, detail="A data job is already running")
 
     # Skip if already downloaded enough shards
     raw_dir = Path(req.output_dir)
@@ -103,16 +111,16 @@ async def download_data(req: DownloadRequest) -> dict:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()
 
-    thread = threading.Thread(target=run, daemon=True)
-    pipeline.active_thread = thread
-    thread.start()
+    _data_thread = threading.Thread(target=run, daemon=True)
+    _data_thread.start()
     return {"status": "started"}
 
 
 @router.post("/tokenize")
 async def tokenize_data(req: TokenizeRequest) -> dict:
-    if pipeline.is_busy():
-        raise HTTPException(status_code=409, detail="A job is already running")
+    global _data_thread
+    if _data_busy():
+        raise HTTPException(status_code=409, detail="A data job is already running")
 
     pipeline.broadcast_status("data", "running")
 
@@ -139,16 +147,16 @@ async def tokenize_data(req: TokenizeRequest) -> dict:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()
 
-    thread = threading.Thread(target=run, daemon=True)
-    pipeline.active_thread = thread
-    thread.start()
+    _data_thread = threading.Thread(target=run, daemon=True)
+    _data_thread.start()
     return {"status": "started"}
 
 
 @router.post("/validate")
 async def validate_data(req: ValidateRequest) -> dict:
-    if pipeline.is_busy():
-        raise HTTPException(status_code=409, detail="A job is already running")
+    global _data_thread
+    if _data_busy():
+        raise HTTPException(status_code=409, detail="A data job is already running")
 
     pipeline.broadcast_status("data", "running")
 
@@ -161,9 +169,8 @@ async def validate_data(req: ValidateRequest) -> dict:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()
 
-    thread = threading.Thread(target=run, daemon=True)
-    pipeline.active_thread = thread
-    thread.start()
+    _data_thread = threading.Thread(target=run, daemon=True)
+    _data_thread.start()
     return {"status": "started"}
 
 
@@ -188,7 +195,10 @@ async def sft_datasets() -> dict:
     """Return available SFT datasets and any already-downloaded JSONL files."""
     from scripts.prepare_data import SFT_DATASETS
 
-    available = {k: {"repo": v["repo"]} for k, v in SFT_DATASETS.items()}
+    available = {
+        k: {"repo": v["repo"], "desc": v.get("desc", "")}
+        for k, v in SFT_DATASETS.items()
+    }
 
     downloaded: list[dict] = []
     sft_dir = Path("./data/sft")
@@ -206,8 +216,9 @@ async def sft_datasets() -> dict:
 
 @router.post("/sft/download")
 async def sft_download(req: SFTDownloadRequest) -> dict:
-    if pipeline.is_busy():
-        raise HTTPException(status_code=409, detail="A job is already running")
+    global _data_thread
+    if _data_busy():
+        raise HTTPException(status_code=409, detail="A data job is already running")
 
     pipeline.broadcast_status("data", "running")
 
@@ -234,16 +245,16 @@ async def sft_download(req: SFTDownloadRequest) -> dict:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()
 
-    thread = threading.Thread(target=run, daemon=True)
-    pipeline.active_thread = thread
-    thread.start()
+    _data_thread = threading.Thread(target=run, daemon=True)
+    _data_thread.start()
     return {"status": "started"}
 
 
 @router.post("/sft/validate")
 async def sft_validate(req: SFTValidateRequest) -> dict:
-    if pipeline.is_busy():
-        raise HTTPException(status_code=409, detail="A job is already running")
+    global _data_thread
+    if _data_busy():
+        raise HTTPException(status_code=409, detail="A data job is already running")
 
     pipeline.broadcast_status("data", "running")
 
@@ -261,7 +272,6 @@ async def sft_validate(req: SFTValidateRequest) -> dict:
             pipeline.broadcast_status("data", "error", error=str(e))
             traceback.print_exc()
 
-    thread = threading.Thread(target=run, daemon=True)
-    pipeline.active_thread = thread
-    thread.start()
+    _data_thread = threading.Thread(target=run, daemon=True)
+    _data_thread.start()
     return {"status": "started"}

@@ -116,4 +116,4 @@ export const validateSFTData = (body: { data_path?: string }) =>
   request<{ status: string }>('/data/sft/validate', { method: 'POST', body: JSON.stringify(body) });
 
 export const listSFTDatasets = () =>
-  request<{ available: Record<string, { repo: string }>; downloaded: { name: string; path: string; rows: number }[] }>('/data/sft/datasets');
+  request<{ available: Record<string, { repo: string; desc: string }>; downloaded: { name: string; path: string; rows: number }[] }>('/data/sft/datasets');

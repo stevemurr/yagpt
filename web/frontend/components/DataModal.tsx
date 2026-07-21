@@ -31,7 +31,10 @@ interface DataDir {
 
 type Tab = 'pretrain' | 'sft';
 
-const SFT_DATASET_OPTIONS = ['OpenOrca', 'Alpaca', 'UltraChat', 'SlimOrca', 'Custom'];
+interface SFTDatasetInfo {
+  repo: string;
+  desc: string;
+}
 
 interface SFTDownloaded {
   name: string;
@@ -57,7 +60,11 @@ export function DataModal() {
   const [sftCustomRepo, setSftCustomRepo] = useState('');
   const [sftSubset, setSftSubset] = useState('');
   const [sftMaxRows, setSftMaxRows] = useState<number | null>(null);
+  const [sftAvailable, setSftAvailable] = useState<Record<string, SFTDatasetInfo>>({});
   const [sftDownloaded, setSftDownloaded] = useState<SFTDownloaded[]>([]);
+
+  const sftDatasetNames = useMemo(() => [...Object.keys(sftAvailable), 'Custom'], [sftAvailable]);
+  const sftDesc = sftDataset !== 'Custom' ? sftAvailable[sftDataset]?.desc : undefined;
 
   // Fetch available data dirs (pretrain)
   useEffect(() => {
@@ -72,7 +79,10 @@ export function DataModal() {
   useEffect(() => {
     if (!open || tab !== 'sft') return;
     api.listSFTDatasets()
-      .then((data) => setSftDownloaded(data.downloaded))
+      .then((data) => {
+        setSftAvailable(data.available);
+        setSftDownloaded(data.downloaded);
+      })
       .catch(() => {});
   }, [open, tab]);
 
@@ -306,10 +316,13 @@ export function DataModal() {
                     background: '#fafafa', outline: 'none',
                   }}
                 >
-                  {SFT_DATASET_OPTIONS.map((d) => (
+                  {sftDatasetNames.map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
+                {sftDesc && (
+                  <div style={{ fontSize: '9px', color: '#aaa', marginTop: '3px' }}>{sftDesc}</div>
+                )}
               </div>
 
               {/* Custom repo field */}
